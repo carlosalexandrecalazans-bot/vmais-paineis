@@ -479,6 +479,12 @@
     return Math.floor(hours / 24) + 'd';
   }
 
+  function leadDisplay(lead) {
+    const tel = formatPhone(lead.telefone);
+    if (lead.nome) return escapeHtml(lead.nome) + ' (' + tel + ')';
+    return tel;
+  }
+
   function lastActivityIso(lead) {
     const hist = Array.isArray(lead.historico_conversa) ? lead.historico_conversa : [];
     if (hist.length > 0) return hist[hist.length - 1].timestamp;
@@ -531,8 +537,7 @@
     card.innerHTML = `
       <div class="card-top">
         <div>
-          <div class="phone">${formatPhone(lead.telefone)}</div>
-          ${lead.nome ? '<div class="lead-name">' + escapeHtml(lead.nome) + '</div>' : ''}
+          <div class="phone">${leadDisplay(lead)}</div>
         </div>
         <div class="time">${timeAgo(lead.data_hora)}</div>
       </div>
@@ -614,8 +619,7 @@
         <div class="list-row" data-lead-id="${lead.id}">
           <div class="info">
             <div class="top-line">
-              <span class="nome">${escapeHtml(lead.nome) || formatPhone(lead.telefone)}</span>
-              <span class="tel">${formatPhone(lead.telefone)}</span>
+              <span class="nome">${leadDisplay(lead)}</span>
             </div>
             ${lead.produto_interesse ? '<div class="interesse">' + escapeHtml(lead.produto_interesse) + '</div>' : ''}
           </div>
@@ -678,8 +682,8 @@
   }
   function abrirChat(lead) {
     leadAberto = lead.id;
-    document.getElementById('chatNome').textContent = lead.nome || 'Sem nome';
-    document.getElementById('chatTelefone').textContent = formatPhone(lead.telefone);
+    document.getElementById('chatNome').textContent = lead.nome || formatPhone(lead.telefone);
+    document.getElementById('chatTelefone').textContent = lead.nome ? formatPhone(lead.telefone) : '';
     document.getElementById('chatPanel').classList.add('open');
     renderChatBody();
   }
@@ -855,8 +859,7 @@
 
     const linhas = daEtapa.map(l => `
       <tr>
-        <td>${escapeHtml(l.nome) || formatPhone(l.telefone)}</td>
-        <td>${formatPhone(l.telefone)}</td>
+        <td>${leadDisplay(l)}</td>
         <td>${escapeHtml(l.produto_interesse) || '—'}</td>
         <td>${timeAgo(lastActivityIso(l))}</td>
       </tr>
@@ -864,7 +867,7 @@
 
     container.innerHTML = `
       <div style="font-weight:700; font-size:12.5px; margin-bottom:6px; color:var(--gold-deep);">${label ? label.label : etapa} (${daEtapa.length})</div>
-      <div class="table-wrap"><table><tr><th>Lead</th><th>Telefone</th><th>Interesse</th><th>Última atividade</th></tr>${linhas}</table></div>
+      <div class="table-wrap"><table><tr><th>Lead</th><th>Interesse</th><th>Última atividade</th></tr>${linhas}</table></div>
     `;
   }
 
@@ -893,8 +896,8 @@
       return `
         <div class="parado-row">
           <div class="info">
-            <div class="nome">${escapeHtml(lead.nome) || formatPhone(lead.telefone)}</div>
-            <div class="meta">${formatPhone(lead.telefone)} · ${STAGE_LABELS[lead.etapa_funil || 'novo']} · ${lead.atendimento_modo === 'humano' ? 'Aguardando você' : 'Bot'}</div>
+            <div class="nome">${leadDisplay(lead)}</div>
+            <div class="meta">${STAGE_LABELS[lead.etapa_funil || 'novo']} · ${lead.atendimento_modo === 'humano' ? 'Aguardando você' : 'Bot'}</div>
           </div>
           <div class="side"><span class="stage-pill ${tagClass}">${tagText}</span></div>
         </div>
@@ -1036,8 +1039,7 @@
       if (itens.length === 0) return '';
       const linhas = itens.map(l => `
         <tr>
-          <td>${escapeHtml(l.nome) || formatPhone(l.telefone)}</td>
-          <td>${formatPhone(l.telefone)}</td>
+          <td>${leadDisplay(l)}</td>
           <td>${escapeHtml(l.produto_interesse) || '—'}</td>
           <td>${timeAgo(lastActivityIso(l))}</td>
         </tr>
@@ -1045,7 +1047,7 @@
       return `
         <div id="grupo-${g.chave}" style="margin-bottom:18px;">
           <div style="font-weight:700; font-size:12.5px; margin-bottom:6px; color:var(--gold-deep);">${g.titulo} (${itens.length})</div>
-          <div class="table-wrap"><table><tr><th>Lead</th><th>Telefone</th><th>Interesse</th><th>Última atividade</th></tr>${linhas}</table></div>
+          <div class="table-wrap"><table><tr><th>Lead</th><th>Interesse</th><th>Última atividade</th></tr>${linhas}</table></div>
         </div>
       `;
     }).join('');
