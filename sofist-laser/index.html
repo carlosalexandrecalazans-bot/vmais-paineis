@@ -321,7 +321,8 @@
     th { font-size: 9.5px; padding: 6px 8px; }
     td { font-size: 11px; padding: 7px 8px; }
   }
-  canvas { max-height: 260px; }
+  canvas { max-height: 200px; }
+  .chart-wrap { max-width: 260px; margin: 0 auto; }
 
   /* Lista de leads parados (cards, evita texto encavalado) */
   .parado-row {
@@ -799,7 +800,7 @@
       <div class="grid-2">
         <div class="section">
           <h2>Leads por etapa <span style="text-transform:none; font-weight:400; opacity:0.7;">(toque numa etapa pra ver os leads)</span></h2>
-          <canvas id="chartFunil"></canvas>
+          <canvas id="chartFunil" style="max-width:260px; margin:0 auto; display:block;"></canvas>
           <div class="stage-clicaveis" id="stageClicaveis" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:6px;"></div>
           <div id="listaEtapaSelecionada" style="margin-top:12px;"></div>
         </div>
