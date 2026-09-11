@@ -298,17 +298,17 @@
   .filter-custom input { background: var(--paper); border: 1px solid var(--line); color: var(--ink); padding: 6px 8px; border-radius: 8px; font-size: 13px; }
   .filter-custom span { color: var(--ink-soft); font-size: 12px; }
 
-  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
-  .kpi { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
-  .kpi .value { font-size: 24px; font-weight: 800; color: var(--gold-deep); }
-  .kpi .label { font-size: 11.5px; color: var(--ink-soft); margin-top: 4px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 14px; }
+  .kpi { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .kpi .value { font-size: 20px; font-weight: 800; color: var(--gold-deep); }
+  .kpi .label { font-size: 10.5px; color: var(--ink-soft); margin-top: 2px; line-height: 1.25; }
   .kpi.danger .value { color: var(--danger); }
   .kpi.success .value { color: var(--success); }
 
-  .section { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 18px; }
-  .section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-soft); margin: 0 0 12px; }
+  .section { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+  .section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-soft); margin: 0 0 10px; }
 
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } }
 
   .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -321,7 +321,25 @@
     th { font-size: 9.5px; padding: 6px 8px; }
     td { font-size: 11px; padding: 7px 8px; }
   }
-  canvas { max-height: 240px; }
+  canvas { max-height: 260px; }
+
+  /* Lista de leads parados (cards, evita texto encavalado) */
+  .parado-row {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .parado-row .info { min-width: 0; flex: 1 1 auto; }
+  .parado-row .info .nome { font-weight: 700; font-size: 13px; }
+  .parado-row .info .meta { font-size: 11px; color: var(--ink-soft); margin-top: 1px; }
+  .parado-row .side { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 
   .hidden { display: none !important; }
 </style>
@@ -343,8 +361,8 @@
 <!-- ABA FUNIL -->
 <div id="abaFunil">
   <div class="view-toggle">
-    <button class="view-btn active" id="btnViewKanban" onclick="mudarVisualizacao('kanban')">▦ Kanban</button>
-    <button class="view-btn" id="btnViewLista" onclick="mudarVisualizacao('lista')">☰ Lista</button>
+    <button class="view-btn" id="btnViewKanban" onclick="mudarVisualizacao('kanban')">▦ Kanban</button>
+    <button class="view-btn active" id="btnViewLista" onclick="mudarVisualizacao('lista')">☰ Lista</button>
   </div>
   <main id="mainFunil">
     <div class="empty">Carregando leads…</div>
@@ -429,7 +447,7 @@
 
   let leads = [];
   let leadAberto = null;
-  let modoVisualizacao = 'kanban';
+  let modoVisualizacao = 'lista';
   let abaAtiva = 'funil';
   let funilChart = null;
 
@@ -801,19 +819,19 @@
     const ctx = document.getElementById('chartFunil');
     if (funilChart) funilChart.destroy();
     funilChart = new Chart(ctx, {
-      type: 'bar',
+      type: 'pie',
       data: { labels: STAGE_ORDER.map(s => STAGE_LABELS[s]), datasets: [{
         data: counts,
         backgroundColor: ['#C9B383', '#B9862E', '#8f5f8f', '#D8B04A', '#7FAE6B', '#4C6B47', '#A4442E']
       }] },
       options: {
+        maintainAspectRatio: true,
+        aspectRatio: 1.3,
         onClick: (evt, elements) => {
           if (elements.length > 0) mostrarLeadsDaEtapa(STAGE_ORDER[elements[0].index], filtrados);
         },
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { color: '#6B5A4E', font: { size: 10 } }, grid: { display: false } },
-          y: { ticks: { color: '#6B5A4E' }, grid: { color: '#E4D8C4' }, beginAtZero: true }
+        plugins: {
+          legend: { position: 'right', labels: { color: '#6B5A4E', font: { size: 10.5 }, boxWidth: 12 } }
         }
       }
     });
@@ -878,15 +896,17 @@
       let tagClass = 'stage-novo', tagText = formatHours(horas);
       if (horas >= 24) { tagClass = 'stage-perdido'; tagText = formatHours(horas) + ' parado'; }
       else if (horas >= 3) { tagClass = 'stage-agendado'; tagText = formatHours(horas) + ' parado'; }
-      return `<tr>
-        <td>${escapeHtml(lead.nome) || formatPhone(lead.telefone)}</td>
-        <td>${formatPhone(lead.telefone)}</td>
-        <td>${STAGE_LABELS[lead.etapa_funil || 'novo']}</td>
-        <td>${lead.atendimento_modo === 'humano' ? 'Aguardando você' : 'Bot'}</td>
-        <td><span class="stage-pill ${tagClass}">${tagText}</span></td>
-      </tr>`;
+      return `
+        <div class="parado-row">
+          <div class="info">
+            <div class="nome">${escapeHtml(lead.nome) || formatPhone(lead.telefone)}</div>
+            <div class="meta">${formatPhone(lead.telefone)} · ${STAGE_LABELS[lead.etapa_funil || 'novo']} · ${lead.atendimento_modo === 'humano' ? 'Aguardando você' : 'Bot'}</div>
+          </div>
+          <div class="side"><span class="stage-pill ${tagClass}">${tagText}</span></div>
+        </div>
+      `;
     }).join('');
-    container.innerHTML = `<div class="table-wrap"><table><tr><th>Lead</th><th>Telefone</th><th>Etapa</th><th>Atendimento</th><th>Parado há</th></tr>${linhas}</table></div>`;
+    container.innerHTML = linhas;
   }
 
   document.querySelectorAll('.filter-btn[data-range]').forEach(btn => {
