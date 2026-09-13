@@ -250,6 +250,7 @@
   .stage-novo { background: #EFE4CF; color: #8C6420; }
   .stage-em_conversa { background: #E4D3B0; color: #6B4E12; }
   .stage-em_resgate { background: #F0C89A; color: #8A4E10; }
+  .stage-rmkt { background: #C9D6E0; color: #2E4E6B; }
   .stage-aguardando_agenda { background: #E0C9E0; color: #6B2E6B; }
   .stage-agendado { background: #E7D8A6; color: #7A5E00; }
   .stage-compareceu { background: #D9E7CF; color: #3F6B2E; }
@@ -440,13 +441,14 @@
     { id: 'novo', label: 'Novo' },
     { id: 'em_conversa', label: 'Em conversa' },
     { id: 'em_resgate', label: 'Em resgate' },
+    { id: 'rmkt', label: 'Rmkt' },
     { id: 'aguardando_agenda', label: 'Aguardando agenda' },
     { id: 'agendado', label: 'Agendado' },
     { id: 'compareceu', label: 'Compareceu' },
     { id: 'venda', label: 'Venda' },
     { id: 'perdido', label: 'Perdido' }
   ];
-  const NEXT_STAGE = { novo: 'em_conversa', em_conversa: 'em_resgate', em_resgate: 'aguardando_agenda', aguardando_agenda: 'agendado', agendado: 'compareceu', compareceu: 'venda' };
+  const NEXT_STAGE = { novo: 'em_conversa', em_conversa: 'em_resgate', em_resgate: 'rmkt', rmkt: 'aguardando_agenda', aguardando_agenda: 'agendado', agendado: 'compareceu', compareceu: 'venda' };
 
   let leads = [];
   let leadAberto = null;
@@ -825,7 +827,7 @@
       type: 'pie',
       data: { labels: STAGE_ORDER.map(s => STAGE_LABELS[s]), datasets: [{
         data: counts,
-        backgroundColor: ['#C9B383', '#B9862E', '#D89A4A', '#8f5f8f', '#D8B04A', '#7FAE6B', '#4C6B47', '#A4442E']
+        backgroundColor: ['#C9B383', '#B9862E', '#D89A4A', '#8fa3b0', '#8f5f8f', '#D8B04A', '#7FAE6B', '#4C6B47', '#A4442E']
       }] },
       options: {
         maintainAspectRatio: true,
