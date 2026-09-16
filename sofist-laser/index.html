@@ -245,7 +245,8 @@
     font-size: 12px; color: var(--ink-soft);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;
   }
-  .list-row .side { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+  .list-row .side { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
+  .list-move-select { flex: 0 0 auto !important; width: auto; max-width: 110px; font-size: 11px; padding: 5px 4px !important; }
   .stage-pill { font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 999px; text-transform: uppercase; white-space: nowrap; }
   .stage-novo { background: #EFE4CF; color: #8C6420; }
   .stage-em_conversa { background: #E4D3B0; color: #6B4E12; }
@@ -422,6 +423,7 @@
       <div class="phone" id="chatTelefone">—</div>
     </div>
     <div style="display:flex; align-items:center; gap:8px;">
+      <button class="close-btn" id="btnAssumir" style="font-size:11px; border:1px solid rgba(255,255,255,0.3); border-radius:6px; padding:5px 10px;" onclick="assumirAtendimento()">🙋 Assumir</button>
       <button class="close-btn" style="font-size:11px; border:1px solid rgba(255,255,255,0.3); border-radius:6px; padding:5px 10px;" onclick="devolverParaIA()">🤖 Devolver pra IA</button>
       <button class="close-btn" onclick="fecharChat()">✕</button>
     </div>
@@ -634,6 +636,10 @@
             ${lead.atendimento_modo === 'humano' ? '<span class="tag" style="background:#F2D7C9;color:#A4442E;">🔔</span>' : ''}
             <span class="time">${timeAgo(lastActivityIso(lead))}</span>
             <span class="stage-pill stage-${stage}">${label ? label.label : stage}</span>
+            <select class="btn btn-secondary list-move-select" data-lead-id="${lead.id}">
+              <option value="">Mover p/…</option>
+              ${STAGES.filter(s => s.id !== stage).map(s => `<option value="${s.id}">${s.label}</option>`).join('')}
+            </select>
           </div>
         </div>
       `;
@@ -641,9 +647,17 @@
 
     main.innerHTML = '<div class="list-view">' + linhas + '</div>';
     main.querySelectorAll('.list-row').forEach(row => {
-      row.addEventListener('click', () => {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.list-move-select')) return;
         const lead = leads.find(l => l.id === Number(row.dataset.leadId));
         if (lead) abrirChat(lead);
+      });
+    });
+    main.querySelectorAll('.list-move-select').forEach(select => {
+      select.addEventListener('click', (e) => e.stopPropagation());
+      select.addEventListener('change', () => {
+        if (select.value) updateStage(Number(select.dataset.leadId), select.value);
+        select.value = '';
       });
     });
   }
@@ -722,6 +736,23 @@
       showToast('Erro ao enviar — tenta de novo');
     } finally {
       btn.disabled = false;
+    }
+  }
+  async function assumirAtendimento() {
+    if (!leadAberto) return;
+    const lead = leads.find(l => l.id === leadAberto);
+    if (!lead) return;
+    try {
+      const res = await fetch(API_BASE + '/funil-assumir-humano', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead_id: lead.id })
+      });
+      if (!res.ok) throw new Error('Falha');
+      lead.atendimento_modo = 'humano';
+      showToast('Você assumiu — Sofia não vai responder esse lead 🙋');
+      renderConteudoFunil();
+    } catch (err) {
+      showToast('Erro ao assumir — tenta de novo');
     }
   }
   async function devolverParaIA() {
