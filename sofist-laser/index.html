@@ -247,6 +247,15 @@
   }
   .list-row .side { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
   .list-move-select { flex: 0 0 auto !important; width: auto; max-width: 110px; font-size: 11px; padding: 5px 4px !important; }
+  .filter-bar { display: flex; gap: 8px; padding: 10px 14px; background: var(--panel, #fff); border-bottom: 1px solid rgba(0,0,0,0.08); flex-wrap: wrap; }
+  .filter-bar input, .filter-bar select { flex: 1 1 160px; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(0,0,0,0.15); font-size: 13px; min-width: 0; }
+  .badge-modo { font-size: 10px; padding: 3px 7px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  .badge-modo-bot { background: #DCEBD9; color: #33633A; }
+  .badge-modo-humano { background: #F2D7C9; color: #A4442E; }
+  @media (max-width: 480px) {
+    .filter-bar { padding: 8px 12px; }
+    .filter-bar input, .filter-bar select { font-size: 12px; padding: 7px 8px; }
+  }
   @media (max-width: 480px) {
     .list-row { flex-direction: column; align-items: stretch; padding: 10px 12px; gap: 6px; }
     .list-row .side { justify-content: space-between; width: 100%; }
@@ -376,6 +385,12 @@
     <button class="view-btn" id="btnViewKanban" onclick="mudarVisualizacao('kanban')">▦ Kanban</button>
     <button class="view-btn active" id="btnViewLista" onclick="mudarVisualizacao('lista')">☰ Lista</button>
   </div>
+  <div class="filter-bar">
+    <input type="text" id="filtroBusca" placeholder="Buscar por nome ou telefone…" oninput="aplicarFiltros()" />
+    <select id="filtroEtapa" onchange="aplicarFiltros()">
+      <option value="">Todas as etapas</option>
+    </select>
+  </div>
   <main id="mainFunil">
     <div class="empty">Carregando leads…</div>
   </main>
@@ -437,8 +452,20 @@
   </div>
   <div class="chat-body" id="chatBody"></div>
   <div class="chat-input-row">
+    <button class="chat-send-btn" id="chatFotoBtn" onclick="abrirEnvioFoto()" title="Enviar foto" style="background:var(--brand-2,#8a6d3b);">📷</button>
     <textarea id="chatInput" rows="1" placeholder="Digite sua resposta…"></textarea>
     <button class="chat-send-btn" id="chatSendBtn" onclick="enviarResposta()">➤</button>
+  </div>
+  <div id="fotoModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:50; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:12px; padding:20px; width:90%; max-width:360px;">
+      <h3 style="margin:0 0 12px;">Enviar foto</h3>
+      <input type="text" id="fotoUrlInput" placeholder="Link da imagem (URL)" style="width:100%; padding:9px 10px; margin-bottom:8px; border:1px solid #ccc; border-radius:8px;" />
+      <input type="text" id="fotoLegendaInput" placeholder="Legenda (opcional)" style="width:100%; padding:9px 10px; margin-bottom:12px; border:1px solid #ccc; border-radius:8px;" />
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn btn-secondary" onclick="fecharEnvioFoto()">Cancelar</button>
+        <button class="btn btn-primary" onclick="confirmarEnvioFoto()">Enviar</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -448,7 +475,7 @@
 
   const STAGES = [
     { id: 'novo', label: 'Novo' },
-    { id: 'em_conversa', label: 'Em conversa' },
+    { id: 'em_conversa', label: 'Negociando' },
     { id: 'em_resgate', label: 'Em resgate' },
     { id: 'rmkt', label: 'Rmkt' },
     { id: 'aguardando_agenda', label: 'Aguardando agenda' },
@@ -536,7 +563,33 @@
   }
 
   // ================= FUNIL =================
+  function leadsFiltrados() {
+    const busca = (document.getElementById('filtroBusca')?.value || '').trim().toLowerCase();
+    const etapa = document.getElementById('filtroEtapa')?.value || '';
+    return leads.filter(lead => {
+      if (etapa && (lead.etapa_funil || 'novo') !== etapa) return false;
+      if (busca) {
+        const nome = (lead.nome || '').toLowerCase();
+        const tel = (lead.telefone || '').toLowerCase();
+        if (!nome.includes(busca) && !tel.includes(busca)) return false;
+      }
+      return true;
+    });
+  }
+
+  function aplicarFiltros() {
+    renderConteudoFunil();
+  }
+
+  function popularFiltroEtapas() {
+    const sel = document.getElementById('filtroEtapa');
+    if (!sel || sel.dataset.populado) return;
+    sel.insertAdjacentHTML('beforeend', STAGES.map(s => `<option value="${s.id}">${s.label}</option>`).join(''));
+    sel.dataset.populado = '1';
+  }
+
   function renderConteudoFunil() {
+    popularFiltroEtapas();
     if (modoVisualizacao === 'lista') renderListView(); else renderBoard();
   }
 
@@ -560,7 +613,7 @@
       ${lead.produto_interesse ? '<div class="interest">' + escapeHtml(lead.produto_interesse) + '</div>' : ''}
       <div class="tags">
         <span class="tag ${hasClid ? '' : 'no-clid'}">${hasClid ? 'Veio de anúncio' : 'Sem origem rastreada'}</span>
-        ${lead.atendimento_modo === 'humano' ? '<span class="tag" style="background:#F2D7C9;color:#A4442E;">🔔 Aguardando você</span>' : ''}
+        <span class="badge-modo ${lead.atendimento_modo === 'humano' ? 'badge-modo-humano' : 'badge-modo-bot'}">${lead.atendimento_modo === 'humano' ? '🙋 Humano' : '🤖 IA'}</span>
       </div>
       <div class="actions"></div>
     `;
@@ -597,7 +650,7 @@
     board.className = 'board';
 
     STAGES.forEach(stage => {
-      const leadsDaColuna = leads.filter(l => (l.etapa_funil || 'novo') === stage.id)
+      const leadsDaColuna = leadsFiltrados().filter(l => (l.etapa_funil || 'novo') === stage.id)
         .sort((a, b) => new Date(b.data_hora) - new Date(a.data_hora));
       const column = document.createElement('div');
       column.className = 'column';
@@ -625,8 +678,9 @@
 
   function renderListView() {
     const main = document.getElementById('mainFunil');
-    if (leads.length === 0) { main.innerHTML = '<div class="empty">Nenhum lead ainda.</div>'; return; }
-    const ordenados = [...leads].sort((a, b) => lastActivityList(b) - lastActivityList(a));
+    const filtrados = leadsFiltrados();
+    if (filtrados.length === 0) { main.innerHTML = '<div class="empty">Nenhum lead encontrado com esse filtro.</div>'; return; }
+    const ordenados = [...filtrados].sort((a, b) => lastActivityList(b) - lastActivityList(a));
 
     const linhas = ordenados.map(lead => {
       const stage = lead.etapa_funil || 'novo';
@@ -640,7 +694,7 @@
             ${lead.produto_interesse ? '<div class="interesse">' + escapeHtml(lead.produto_interesse) + '</div>' : ''}
           </div>
           <div class="side">
-            ${lead.atendimento_modo === 'humano' ? '<span class="tag" style="background:#F2D7C9;color:#A4442E;">🔔</span>' : ''}
+            <span class="badge-modo ${lead.atendimento_modo === 'humano' ? 'badge-modo-humano' : 'badge-modo-bot'}">${lead.atendimento_modo === 'humano' ? '🙋' : '🤖'}</span>
             <span class="time">${timeAgo(lastActivityIso(lead))}</span>
             <span class="stage-pill stage-${stage}">${label ? label.label : stage}</span>
             <select class="btn btn-secondary list-move-select" data-lead-id="${lead.id}">
@@ -743,6 +797,36 @@
       showToast('Erro ao enviar — tenta de novo');
     } finally {
       btn.disabled = false;
+    }
+  }
+  function abrirEnvioFoto() {
+    document.getElementById('fotoUrlInput').value = '';
+    document.getElementById('fotoLegendaInput').value = '';
+    document.getElementById('fotoModal').style.display = 'flex';
+  }
+  function fecharEnvioFoto() {
+    document.getElementById('fotoModal').style.display = 'none';
+  }
+  async function confirmarEnvioFoto() {
+    if (!leadAberto) return;
+    const url = document.getElementById('fotoUrlInput').value.trim();
+    const legenda = document.getElementById('fotoLegendaInput').value.trim();
+    if (!url) { showToast('Cola o link da imagem primeiro'); return; }
+    try {
+      const res = await fetch(API_BASE + '/funil-enviar-midia', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead_id: leadAberto, image_url: url, caption: legenda })
+      });
+      if (!res.ok) throw new Error('Falha');
+      fecharEnvioFoto();
+      showToast('Foto enviada 📷');
+      const lead = leads.find(l => l.id === leadAberto);
+      if (lead) {
+        lead.historico_conversa = (lead.historico_conversa || []).concat([{ role: 'assistant', content: legenda || '[imagem enviada manualmente]', tipo: 'imagem', timestamp: new Date().toISOString() }]);
+        abrirChat(lead);
+      }
+    } catch (err) {
+      showToast('Erro ao enviar foto — tenta de novo');
     }
   }
   async function assumirAtendimento() {
