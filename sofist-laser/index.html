@@ -758,7 +758,10 @@
     if (hist.length === 0) { body.innerHTML = '<div class="empty" style="color:#8a7554;">Nenhuma mensagem ainda.</div>'; return; }
     body.innerHTML = hist.map(m => {
       const classe = m.role === 'user' ? 'cliente' : (m.role === 'humano' ? 'humano' : 'bot');
-      return `<div class="bubble ${classe}"><span class="tag-remetente">${nomeRemetente(m.role)}</span>${escapeHtml(m.content)}<div class="meta">${horaCurta(m.timestamp)}</div></div>`;
+      const conteudo = (m.tipo === 'imagem' && m.url)
+        ? `<img src="${escapeHtml(m.url)}" alt="Imagem" style="max-width:220px; border-radius:8px; display:block; margin-bottom:4px;" />${escapeHtml(m.content || '')}`
+        : escapeHtml(m.content);
+      return `<div class="bubble ${classe}"><span class="tag-remetente">${nomeRemetente(m.role)}</span>${conteudo}<div class="meta">${horaCurta(m.timestamp)}</div></div>`;
     }).join('');
     body.scrollTop = body.scrollHeight;
   }
@@ -822,7 +825,7 @@
       showToast('Foto enviada 📷');
       const lead = leads.find(l => l.id === leadAberto);
       if (lead) {
-        lead.historico_conversa = (lead.historico_conversa || []).concat([{ role: 'assistant', content: legenda || '[imagem enviada manualmente]', tipo: 'imagem', timestamp: new Date().toISOString() }]);
+        lead.historico_conversa = (lead.historico_conversa || []).concat([{ role: 'assistant', content: legenda || '[imagem enviada manualmente]', tipo: 'imagem', url: url, timestamp: new Date().toISOString() }]);
         abrirChat(lead);
       }
     } catch (err) {
