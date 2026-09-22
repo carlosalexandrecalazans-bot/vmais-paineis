@@ -1207,8 +1207,28 @@
     }
   }
 
+  // Polling: intervalo de base + pausa quando a aba está em segundo plano + só em horário comercial
+  const POLL_INTERVAL_MS = 3 * 60 * 1000; // 3 minutos
+  const HORARIO_COMERCIAL_INICIO = 8;
+  const HORARIO_COMERCIAL_FIM = 20;
+
+  function dentroDoHorarioComercial() {
+    const hora = new Date().getHours();
+    return hora >= HORARIO_COMERCIAL_INICIO && hora < HORARIO_COMERCIAL_FIM;
+  }
+
+  function pollLeadsSeConveniente() {
+    if (document.hidden) return; // aba em segundo plano — não gasta execução do n8n
+    if (!dentroDoHorarioComercial()) return; // fora do horário comercial — não gasta execução do n8n
+    loadLeads(false);
+  }
+
   loadLeads(true);
-  setInterval(() => loadLeads(false), 30000);
+  setInterval(pollLeadsSeConveniente, POLL_INTERVAL_MS);
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadLeads(false); // voltou o foco — atualiza na hora, sem esperar o próximo ciclo
+  });
 </script>
 
 </body>
