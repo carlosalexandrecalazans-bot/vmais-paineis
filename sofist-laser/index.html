@@ -252,6 +252,11 @@
   .badge-modo { font-size: 10px; padding: 3px 7px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
   .badge-modo-bot { background: #DCEBD9; color: #33633A; }
   .badge-modo-humano { background: #F2D7C9; color: #A4442E; }
+  .badge-temp { font-size: 10px; padding: 3px 7px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  .badge-temp-quente { background: #F8D7CE; color: #B3401E; }
+  .badge-temp-morno { background: #FAEAC4; color: #8C6420; }
+  .badge-temp-frio { background: #D8E6F2; color: #2E5D8A; }
+  .badge-temp-desqualificado { background: #E3E3E3; color: #666; }
   @media (max-width: 480px) {
     .filter-bar { padding: 8px 12px; }
     .filter-bar input, .filter-bar select { font-size: 12px; padding: 7px 8px; }
@@ -593,6 +598,18 @@
     if (modoVisualizacao === 'lista') renderListView(); else renderBoard();
   }
 
+  const TEMPERATURAS = {
+    quente: { emoji: '🔥', label: 'Quente' },
+    morno: { emoji: '🌤️', label: 'Morno' },
+    frio: { emoji: '❄️', label: 'Frio' },
+    desqualificado: { emoji: '🚫', label: 'Desqualificado' }
+  };
+  function temperaturaBadge(lead, compacto) {
+    const t = TEMPERATURAS[lead.temperatura];
+    if (!t) return '';
+    return `<span class="badge-temp badge-temp-${lead.temperatura}">${t.emoji}${compacto ? '' : ' ' + t.label}</span>`;
+  }
+
   function buildCard(lead) {
     const card = document.createElement('div');
     card.className = 'card clicavel';
@@ -614,6 +631,7 @@
       <div class="tags">
         <span class="tag ${hasClid ? '' : 'no-clid'}">${hasClid ? 'Veio de anúncio' : 'Sem origem rastreada'}</span>
         <span class="badge-modo ${lead.atendimento_modo === 'humano' ? 'badge-modo-humano' : 'badge-modo-bot'}">${lead.atendimento_modo === 'humano' ? '🙋 Humano' : '🤖 IA'}</span>
+        ${temperaturaBadge(lead)}
       </div>
       <div class="actions"></div>
     `;
@@ -694,6 +712,7 @@
             ${lead.produto_interesse ? '<div class="interesse">' + escapeHtml(lead.produto_interesse) + '</div>' : ''}
           </div>
           <div class="side">
+            ${temperaturaBadge(lead, true)}
             <span class="badge-modo ${lead.atendimento_modo === 'humano' ? 'badge-modo-humano' : 'badge-modo-bot'}">${lead.atendimento_modo === 'humano' ? '🙋' : '🤖'}</span>
             <span class="time">${timeAgo(lastActivityIso(lead))}</span>
             <span class="stage-pill stage-${stage}">${label ? label.label : stage}</span>
