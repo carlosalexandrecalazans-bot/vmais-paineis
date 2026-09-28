@@ -349,24 +349,6 @@
   canvas { max-height: 200px; }
   .chart-wrap { max-width: 260px; margin: 0 auto; }
 
-  /* Lista de leads parados (cards, evita texto encavalado) */
-  .parado-row {
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 8px 10px;
-    margin-bottom: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .parado-row .info { min-width: 0; flex: 1 1 auto; }
-  .parado-row .info .nome { font-weight: 700; font-size: 13px; }
-  .parado-row .info .meta { font-size: 11px; color: var(--ink-soft); margin-top: 1px; }
-  .parado-row .side { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-
   .hidden { display: none !important; }
 </style>
 </head>
@@ -893,13 +875,6 @@
   const STAGE_LABELS = Object.fromEntries(STAGES.map(s => [s.id, s.label]));
   const STAGE_ORDER = STAGES.map(s => s.id);
 
-  function hoursSince(date) { return (Date.now() - date.getTime()) / (1000 * 60 * 60); }
-  function formatHours(h) {
-    if (h < 1) return Math.round(h * 60) + 'min';
-    if (h < 24) return Math.round(h) + 'h';
-    return Math.round(h / 24) + 'd';
-  }
-
   function getRange(preset) {
     const now = new Date();
     const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0);
@@ -934,12 +909,6 @@
     const comOrigem = filtrados.filter(l => l.ctwa_clid).length;
     const taxaConversao = total ? Math.round((vendas / total) * 100) : 0;
 
-    const parados = filtrados
-      .filter(l => l.etapa_funil !== 'venda' && l.etapa_funil !== 'perdido')
-      .map(l => ({ lead: l, horas: hoursSince(new Date(lastActivityIso(l))) }))
-      .filter(x => x.horas >= 1)
-      .sort((a, b) => b.horas - a.horas);
-
     main.innerHTML = `
       <div class="kpis">
         <div class="kpi"><div class="value">${total}</div><div class="label">Leads no período</div></div>
@@ -955,12 +924,10 @@
         <div class="stage-clicaveis" id="stageClicaveis" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:6px;"></div>
         <div id="listaEtapaSelecionada" style="margin-top:12px;"></div>
       </div>
-      <div class="section"><h2>Leads parados / esfriando (sem venda ou perda)</h2><div id="tabelaParados"></div></div>
     `;
 
     renderFunilChart(filtrados);
     renderStageClicaveis(filtrados);
-    renderParadosTable(parados);
   }
 
   function renderFunilChart(filtrados) {
@@ -1035,26 +1002,6 @@
       .map(([nome, g]) => `<tr><td>${escapeHtml(nome)}</td><td>${g.total}</td><td style="color:var(--success)">${g.venda}</td><td style="color:var(--danger)">${g.perdido}</td></tr>`)
       .join('');
     document.getElementById('tabelaProcedimento').innerHTML = `<div class="table-wrap"><table><tr><th>Procedimento</th><th>Leads</th><th>Vendas</th><th>Perdidos</th></tr>${linhas}</table></div>`;
-  }
-
-  function renderParadosTable(parados) {
-    const container = document.getElementById('tabelaParados');
-    if (parados.length === 0) { container.innerHTML = '<div class="empty">Nada parado agora — tudo em dia 🎉</div>'; return; }
-    const linhas = parados.slice(0, 30).map(({ lead, horas }) => {
-      let tagClass = 'stage-novo', tagText = formatHours(horas);
-      if (horas >= 24) { tagClass = 'stage-perdido'; tagText = formatHours(horas) + ' parado'; }
-      else if (horas >= 3) { tagClass = 'stage-agendado'; tagText = formatHours(horas) + ' parado'; }
-      return `
-        <div class="parado-row">
-          <div class="info">
-            <div class="nome">${leadDisplay(lead)}</div>
-            <div class="meta">${STAGE_LABELS[lead.etapa_funil || 'novo']} · ${lead.atendimento_modo === 'humano' ? 'Aguardando você' : 'Bot'}</div>
-          </div>
-          <div class="side"><span class="stage-pill ${tagClass}">${tagText}</span></div>
-        </div>
-      `;
-    }).join('');
-    container.innerHTML = linhas;
   }
 
   document.getElementById('filtroRapido').addEventListener('change', (e) => {
