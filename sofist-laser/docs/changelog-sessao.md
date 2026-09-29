@@ -44,3 +44,31 @@ Registro do que foi construído/corrigido nesta sessão, pra consulta futura.
 - Número de notificação de agenda ainda apontando pro número de teste (62 99193-7090) — trocar de volta pro 62 9371-6862 quando confirmar que está tudo certo
 - Token da API Belle Software é idêntico ao da Agenda Online pública — validar com um teste real se funciona pra gravação de cliente
 - WhatsApp em grupo via Evolution API: avaliado, mas não implementado — decisão pendente sobre qual número usar
+
+---
+
+# Sofist Laser — Changelog da sessão (28-29/09/2026)
+
+## Avisos para a equipe (grupo do WhatsApp)
+- **Bug corrigido**: o aviso "🔔 Novo pedido de agendamento" nunca chegava ao grupo desde ~25/09 (nó "Notificar Equipe (Grupo Evolution)" lia `$json.output`, que virou a linha do lead depois da checagem de cooldown). Agora lê a saída da Sofia pelo nome do nó.
+- O horário `ultima_notificacao_equipe` só é gravado se o envio deu certo.
+- Se o envio ao grupo falhar, chega um e-mail "⚠️ Aviso NÃO chegou no grupo Sofist".
+- Checagem diária automática às 20:10 (Claude) confere se algum aviso ficou sem chegar.
+
+## Consumo de execuções do n8n
+- Resgate automático: roda só das 8h às 19h (Goiânia), 12x/dia em vez de 24x.
+- Cloudflare Worker `meta-webhook-filter` (código em `cloudflare/meta-webhook-filter.js`) na frente do webhook CTWA: descarta callbacks de status (enviado/entregue/lido) e confirma o recebimento pra Meta na hora, evitando o reenvio que ela faz quando a resposta passa de ~20s.
+- Raiz do repositório agora só redireciona pra `sofist-laser/` (a cópia antiga do painel fazia polling a cada 30s, 24h).
+
+## Sofia / CTWA
+- Sofia tenta de novo sozinha (3x, 5s) quando a IA falha.
+- **Agrupamento de mensagens**: a mensagem do cliente é gravada na hora; o fluxo espera 8s e, se chegou outra, deixa só a mais recente seguir. A Sofia recebe todas as mensagens pendentes juntas e responde uma vez.
+- Histórico gravado de forma atômica (função `anexar_historico_lead` no Supabase): mensagem do cliente, resposta da Sofia e fotos são acrescentadas, sem sobrescrever — execuções simultâneas não apagam mais mensagens.
+- Fotos de antes/depois voltam a ser gravadas no histórico com legenda e link.
+
+## Painel
+- Removida a seção "Leads parados / esfriando" do Dashboard.
+
+## Pendências
+- Resgate automático e respostas manuais do painel ainda sobrescrevem o histórico inteiro (janela curta, risco baixo) — migrar pra `anexar_historico_lead`.
+- Nós com edições "fantasma" que nunca foram aplicadas (campo `parameters` aninhado): "Preparar atualização com resposta" (etapa `aguardando_equipe`/`rmkt` por `sem_data_especifica`) e o prompt da Sofia (`sem_data_especifica`). Decidir se aplica.
