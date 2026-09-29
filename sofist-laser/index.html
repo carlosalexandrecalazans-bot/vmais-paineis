@@ -257,6 +257,32 @@
   .badge-temp-morno { background: #FAEAC4; color: #8C6420; }
   .badge-temp-frio { background: #D8E6F2; color: #2E5D8A; }
   .badge-temp-desqualificado { background: #E3E3E3; color: #666; }
+  /* Kanban compacto no computador: as 10 etapas cabem na tela sem rolar pro lado */
+  @media (min-width: 900px) {
+    .board { gap: 6px; }
+    .column { min-width: 118px; }
+    .column.vazia { flex: 0 0 84px; min-width: 84px; }
+    .column.vazia .column-header { flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 6px 7px; }
+    .column.vazia .column-header .name { font-size: 8.5px; overflow-wrap: anywhere; }
+    .column-header { padding: 8px 8px 7px; }
+    .column-header .name { font-size: 9.5px; letter-spacing: 0.2px; line-height: 1.25; }
+    .column-header .count { font-size: 10px; padding: 0 6px; }
+    .column-body { padding: 5px; }
+    .column-empty { font-size: 10px; padding: 12px 2px; }
+    .card { padding: 7px 8px; margin-bottom: 6px; border-radius: 8px; }
+    .card-top { gap: 4px; }
+    .phone { font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }
+    .lead-name { font-size: 10px; }
+    .time { font-size: 9.5px; }
+    .interest { font-size: 10.5px; margin-top: 4px; line-height: 1.3; }
+    .tags { margin-top: 5px; gap: 3px; }
+    .tag { font-size: 8.5px; padding: 1px 5px; }
+    .actions { margin-top: 6px; gap: 4px; }
+    .btn { font-size: 9.5px; padding: 5px 4px; border-radius: 6px; }
+    .btn-secondary { padding: 5px 3px; }
+    .actions select { min-width: 0; width: 100%; }
+    .card .badge-modo, .card .badge-temp { font-size: 8.5px; padding: 1px 5px; }
+  }
   @media (max-width: 480px) {
     .filter-bar { padding: 8px 12px; }
     .filter-bar input, .filter-bar select { font-size: 12px; padding: 7px 8px; }
@@ -273,7 +299,7 @@
   .stage-em_conversa { background: #E4D3B0; color: #6B4E12; }
   .stage-em_resgate { background: #F0C89A; color: #8A4E10; }
   .stage-rmkt { background: #C9D6E0; color: #2E4E6B; }
-  .stage-aguardando_equipe { background: #D6CFEA; color: #4A3B7A; }
+  .stage-aguardando_equipe { background: #F5D9A8; color: #8A5A00; }
   .stage-aguardando_agenda { background: #E0C9E0; color: #6B2E6B; }
   .stage-agendado { background: #E7D8A6; color: #7A5E00; }
   .stage-compareceu { background: #D9E7CF; color: #3F6B2E; }
@@ -655,7 +681,7 @@
       const leadsDaColuna = leadsFiltrados().filter(l => (l.etapa_funil || 'novo') === stage.id)
         .sort((a, b) => new Date(b.data_hora) - new Date(a.data_hora));
       const column = document.createElement('div');
-      column.className = 'column';
+      column.className = leadsDaColuna.length === 0 ? 'column vazia' : 'column';
       column.innerHTML = `
         <div class="column-header"><span class="name">${stage.label}</span><span class="count">${leadsDaColuna.length}</span></div>
         <div class="column-body"></div>
@@ -672,7 +698,7 @@
     main.appendChild(board);
     const note = document.createElement('div');
     note.className = 'refresh-note';
-    note.textContent = 'Atualiza sozinho a cada 30s · arraste o quadro pros lados pra ver todas as etapas';
+    note.textContent = 'Atualiza sozinho a cada 3 min (no horário comercial) · no celular, arraste o quadro pros lados pra ver todas as etapas';
     main.appendChild(note);
   }
 
@@ -940,7 +966,7 @@
       type: 'pie',
       data: { labels: STAGE_ORDER.map(s => STAGE_LABELS[s]), datasets: [{
         data: counts,
-        backgroundColor: ['#C9B383', '#B9862E', '#D89A4A', '#8fa3b0', '#7A6BB0', '#8f5f8f', '#D8B04A', '#7FAE6B', '#4C6B47', '#A4442E']
+        backgroundColor: ['#C9B383', '#B9862E', '#D89A4A', '#8fa3b0', '#D9A441', '#8f5f8f', '#D8B04A', '#7FAE6B', '#4C6B47', '#A4442E']
       }] },
       options: {
         maintainAspectRatio: true,
