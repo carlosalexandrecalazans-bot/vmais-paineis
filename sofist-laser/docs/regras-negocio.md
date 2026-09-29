@@ -10,9 +10,9 @@
 | `em_conversa` | **Negociando** | Manual (atendente move) | Não |
 | `em_resgate` | Em resgate | Automático, assim que a 1ª mensagem de resgate é enviada | Sim (continua a régua) |
 | `rmkt` | Rmkt | Automático, 24h após a última mensagem do lead, se já recebeu o resgate de 23h | Não |
+| `aguardando_equipe` | Aguardando equipe | Automático, quando a Sofia passa pra equipe (`pedido_humano` ou `preco`) | Não — só 1 check-in 23h depois ("já conseguiu falar com a equipe?") |
 | `aguardando_agenda` | Aguardando agenda | Automático, quando a Sofia aciona handoff tipo `agenda` | Não |
 | `agendado` | Agendado | Manual (atendente move) | Não |
-| `compareceu` | Compareceu | Manual (atendente move) | Não |
 | `venda` | Venda | Manual (atendente move) | Não |
 | `perdido` | Perdido | Automático (Sofia identifica desistência) ou manual | Não |
 
@@ -28,7 +28,7 @@ Roda a cada 30 min, só entre **8h e 20h** (horário de Goiânia). Fora desse ho
 | 23h | Texto | "Ainda tem interesse, sobrou apenas 1 vaga..." |
 | 24h (se 23h já foi enviado) | — (sem mensagem) | Muda etapa pra `rmkt` |
 
-**Não recebe nenhum resgate** se o lead estiver em: `venda`, `perdido`, `rmkt`, `aguardando_agenda`, `em_conversa` (Negociando), ou se tiver uma pausa ativa (`pausar_resgate_ate` no futuro).
+**Não recebe nenhum resgate** se o lead estiver em: `venda`, `perdido`, `rmkt`, `aguardando_agenda`, `aguardando_equipe` (só o check-in de 23h), `em_conversa` (Negociando), ou se tiver uma pausa ativa (`pausar_resgate_ate` no futuro).
 
 Todas as mensagens levam um rodapé com data/hora do envio.
 

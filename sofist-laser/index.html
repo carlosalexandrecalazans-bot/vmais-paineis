@@ -257,12 +257,20 @@
   .badge-temp-morno { background: #FAEAC4; color: #8C6420; }
   .badge-temp-frio { background: #D8E6F2; color: #2E5D8A; }
   .badge-temp-desqualificado { background: #E3E3E3; color: #666; }
+  .ocultas-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
+  .ocultas-label { font-size: 11px; color: var(--ink-soft); font-weight: 600; }
+  .ocultas-chip { border: 1px dashed var(--line); background: var(--paper); color: var(--ink-soft); border-radius: 999px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .ocultas-chip:hover { border-style: solid; color: var(--ink); }
+  .header-dir { display: flex; align-items: center; gap: 4px; }
+  .ocultar-coluna { border: none; background: transparent; cursor: pointer; font-size: 12px; padding: 0 2px; opacity: 0.45; line-height: 1; }
+  .ocultar-coluna:hover { opacity: 1; }
   /* Kanban compacto no computador: as 10 etapas cabem na tela sem rolar pro lado */
   @media (min-width: 900px) {
     .board { gap: 6px; }
     .column { min-width: 118px; }
     .column.vazia { flex: 0 0 84px; min-width: 84px; }
     .column.vazia .column-header { flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 6px 7px; }
+    .ocultar-coluna { font-size: 10px; }
     .column.vazia .column-header .name { font-size: 8.5px; overflow-wrap: anywhere; }
     .column-header { padding: 8px 8px 7px; }
     .column-header .name { font-size: 9.5px; letter-spacing: 0.2px; line-height: 1.25; }
@@ -302,7 +310,6 @@
   .stage-aguardando_equipe { background: #F5D9A8; color: #8A5A00; }
   .stage-aguardando_agenda { background: #E0C9E0; color: #6B2E6B; }
   .stage-agendado { background: #E7D8A6; color: #7A5E00; }
-  .stage-compareceu { background: #D9E7CF; color: #3F6B2E; }
   .stage-venda { background: #CFE7CF; color: #2E6B34; }
   .stage-perdido { background: #F2D7C9; color: #A4442E; }
 
@@ -487,19 +494,19 @@
   const API_BASE = 'https://vmais.app.n8n.cloud/webhook';
   const SLUG = new URLSearchParams(location.search).get('slug') || 'sofist-laser';
 
+  // Ordem das colunas do Kanban (e das opções de "Mover p/…"). `cor` é a fatia no gráfico de pizza.
   const STAGES = [
-    { id: 'novo', label: 'Novo' },
-    { id: 'em_conversa', label: 'Negociando' },
-    { id: 'em_resgate', label: 'Em resgate' },
-    { id: 'rmkt', label: 'Rmkt' },
-    { id: 'aguardando_equipe', label: 'Aguardando equipe' },
-    { id: 'aguardando_agenda', label: 'Aguardando agenda' },
-    { id: 'agendado', label: 'Agendado' },
-    { id: 'compareceu', label: 'Compareceu' },
-    { id: 'venda', label: 'Venda' },
-    { id: 'perdido', label: 'Perdido' }
+    { id: 'novo', label: 'Novo', cor: '#C9B383' },
+    { id: 'aguardando_equipe', label: 'Aguardando equipe', cor: '#D9A441' },
+    { id: 'em_conversa', label: 'Negociando', cor: '#B9862E' },
+    { id: 'em_resgate', label: 'Em resgate', cor: '#D89A4A' },
+    { id: 'aguardando_agenda', label: 'Aguardando agenda', cor: '#8f5f8f' },
+    { id: 'agendado', label: 'Agendado', cor: '#D8B04A' },
+    { id: 'venda', label: 'Venda', cor: '#4C6B47' },
+    { id: 'rmkt', label: 'Rmkt', cor: '#8fa3b0' },
+    { id: 'perdido', label: 'Perdido', cor: '#A4442E' }
   ];
-  const NEXT_STAGE = { novo: 'em_conversa', em_conversa: 'em_resgate', em_resgate: 'rmkt', rmkt: 'aguardando_agenda', aguardando_equipe: 'aguardando_agenda', aguardando_agenda: 'agendado', agendado: 'compareceu', compareceu: 'venda' };
+  const NEXT_STAGE = { novo: 'em_conversa', em_conversa: 'em_resgate', em_resgate: 'rmkt', rmkt: 'aguardando_agenda', aguardando_equipe: 'aguardando_agenda', aguardando_agenda: 'agendado', agendado: 'venda' };
 
   let leads = [];
   let leadAberto = null;
@@ -671,21 +678,54 @@
     return card;
   }
 
+  // Colunas ocultas do Kanban (preferência de cada navegador). Rmkt e Perdido começam ocultas.
+  const OCULTAS_PADRAO = ['rmkt', 'perdido'];
+  let colunasOcultas = (() => {
+    try {
+      const salvo = JSON.parse(localStorage.getItem('funil_colunas_ocultas'));
+      return Array.isArray(salvo) ? salvo : OCULTAS_PADRAO.slice();
+    } catch (e) { return OCULTAS_PADRAO.slice(); }
+  })();
+  function alternarColuna(stageId) {
+    colunasOcultas = colunasOcultas.includes(stageId)
+      ? colunasOcultas.filter(id => id !== stageId)
+      : colunasOcultas.concat([stageId]);
+    try { localStorage.setItem('funil_colunas_ocultas', JSON.stringify(colunasOcultas)); } catch (e) {}
+    renderBoard();
+  }
+
   function renderBoard() {
     const main = document.getElementById('mainFunil');
     main.innerHTML = '';
     const board = document.createElement('div');
     board.className = 'board';
+    const filtrados = leadsFiltrados();
+    const etapaFiltrada = document.getElementById('filtroEtapa')?.value || '';
+    const contar = id => filtrados.filter(l => (l.etapa_funil || 'novo') === id).length;
+
+    // Se a pessoa filtrou por uma etapa oculta, mostra ela mesmo assim.
+    const ocultasAgora = STAGES.filter(s => colunasOcultas.includes(s.id) && s.id !== etapaFiltrada);
+    if (ocultasAgora.length > 0) {
+      const barra = document.createElement('div');
+      barra.className = 'ocultas-bar';
+      barra.innerHTML = '<span class="ocultas-label">Ocultas:</span>' + ocultasAgora.map(s =>
+        `<button class="ocultas-chip" data-stage="${s.id}" title="Mostrar a coluna ${s.label}">👁 ${s.label} (${contar(s.id)})</button>`
+      ).join('');
+      barra.querySelectorAll('.ocultas-chip').forEach(btn => btn.addEventListener('click', () => alternarColuna(btn.dataset.stage)));
+      main.appendChild(barra);
+    }
 
     STAGES.forEach(stage => {
-      const leadsDaColuna = leadsFiltrados().filter(l => (l.etapa_funil || 'novo') === stage.id)
+      if (ocultasAgora.some(s => s.id === stage.id)) return;
+      const leadsDaColuna = filtrados.filter(l => (l.etapa_funil || 'novo') === stage.id)
         .sort((a, b) => new Date(b.data_hora) - new Date(a.data_hora));
       const column = document.createElement('div');
       column.className = leadsDaColuna.length === 0 ? 'column vazia' : 'column';
       column.innerHTML = `
-        <div class="column-header"><span class="name">${stage.label}</span><span class="count">${leadsDaColuna.length}</span></div>
+        <div class="column-header"><span class="name">${stage.label}</span><span class="header-dir"><span class="count">${leadsDaColuna.length}</span><button class="ocultar-coluna" title="Ocultar esta coluna">🙈</button></span></div>
         <div class="column-body"></div>
       `;
+      column.querySelector('.ocultar-coluna').addEventListener('click', () => alternarColuna(stage.id));
       const body = column.querySelector('.column-body');
       if (leadsDaColuna.length === 0) {
         body.innerHTML = '<div class="column-empty">Nenhum lead aqui</div>';
@@ -966,7 +1006,7 @@
       type: 'pie',
       data: { labels: STAGE_ORDER.map(s => STAGE_LABELS[s]), datasets: [{
         data: counts,
-        backgroundColor: ['#C9B383', '#B9862E', '#D89A4A', '#8fa3b0', '#D9A441', '#8f5f8f', '#D8B04A', '#7FAE6B', '#4C6B47', '#A4442E']
+        backgroundColor: STAGES.map(s => s.cor)
       }] },
       options: {
         maintainAspectRatio: true,
@@ -1097,7 +1137,7 @@
   function classificarTrafego(lead) {
     const etapa = lead.etapa_funil || 'novo';
     if (etapa === 'perdido') return 'negaram';
-    if (['venda', 'compareceu', 'agendado', 'aguardando_agenda'].includes(etapa)) return 'avancou';
+    if (['venda', 'agendado', 'aguardando_agenda'].includes(etapa)) return 'avancou';
     if (etapa === 'aguardando_equipe') return 'aguardando_resposta_nossa'; // Sofia passou pra equipe: a resposta é nossa
     const hist = Array.isArray(lead.historico_conversa) ? lead.historico_conversa : [];
     if (hist.length === 0 || etapa === 'novo') return 'primeiro_atendimento';
