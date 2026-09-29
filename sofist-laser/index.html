@@ -273,6 +273,7 @@
   .stage-em_conversa { background: #E4D3B0; color: #6B4E12; }
   .stage-em_resgate { background: #F0C89A; color: #8A4E10; }
   .stage-rmkt { background: #C9D6E0; color: #2E4E6B; }
+  .stage-aguardando_equipe { background: #D6CFEA; color: #4A3B7A; }
   .stage-aguardando_agenda { background: #E0C9E0; color: #6B2E6B; }
   .stage-agendado { background: #E7D8A6; color: #7A5E00; }
   .stage-compareceu { background: #D9E7CF; color: #3F6B2E; }
@@ -465,13 +466,14 @@
     { id: 'em_conversa', label: 'Negociando' },
     { id: 'em_resgate', label: 'Em resgate' },
     { id: 'rmkt', label: 'Rmkt' },
+    { id: 'aguardando_equipe', label: 'Aguardando equipe' },
     { id: 'aguardando_agenda', label: 'Aguardando agenda' },
     { id: 'agendado', label: 'Agendado' },
     { id: 'compareceu', label: 'Compareceu' },
     { id: 'venda', label: 'Venda' },
     { id: 'perdido', label: 'Perdido' }
   ];
-  const NEXT_STAGE = { novo: 'em_conversa', em_conversa: 'em_resgate', em_resgate: 'rmkt', rmkt: 'aguardando_agenda', aguardando_agenda: 'agendado', agendado: 'compareceu', compareceu: 'venda' };
+  const NEXT_STAGE = { novo: 'em_conversa', em_conversa: 'em_resgate', em_resgate: 'rmkt', rmkt: 'aguardando_agenda', aguardando_equipe: 'aguardando_agenda', aguardando_agenda: 'agendado', agendado: 'compareceu', compareceu: 'venda' };
 
   let leads = [];
   let leadAberto = null;
@@ -938,7 +940,7 @@
       type: 'pie',
       data: { labels: STAGE_ORDER.map(s => STAGE_LABELS[s]), datasets: [{
         data: counts,
-        backgroundColor: ['#C9B383', '#B9862E', '#D89A4A', '#8fa3b0', '#8f5f8f', '#D8B04A', '#7FAE6B', '#4C6B47', '#A4442E']
+        backgroundColor: ['#C9B383', '#B9862E', '#D89A4A', '#8fa3b0', '#7A6BB0', '#8f5f8f', '#D8B04A', '#7FAE6B', '#4C6B47', '#A4442E']
       }] },
       options: {
         maintainAspectRatio: true,
@@ -1070,6 +1072,7 @@
     const etapa = lead.etapa_funil || 'novo';
     if (etapa === 'perdido') return 'negaram';
     if (['venda', 'compareceu', 'agendado', 'aguardando_agenda'].includes(etapa)) return 'avancou';
+    if (etapa === 'aguardando_equipe') return 'aguardando_resposta_nossa'; // Sofia passou pra equipe: a resposta é nossa
     const hist = Array.isArray(lead.historico_conversa) ? lead.historico_conversa : [];
     if (hist.length === 0 || etapa === 'novo') return 'primeiro_atendimento';
     const ultima = hist[hist.length - 1];
