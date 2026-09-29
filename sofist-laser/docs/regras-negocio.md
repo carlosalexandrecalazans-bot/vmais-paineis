@@ -42,7 +42,7 @@ Todas as mensagens levam um rodapé com data/hora do envio.
 
 | tipo_handoff | Quando aciona | Notifica quem? |
 |---|---|---|
-| `agenda` | Nome completo + CPF + telefone + procedimento + dia/horário de preferência já coletados | WhatsApp (equipe) + E-mail + grava lead no CRM Belle Software |
+| `agenda` | Nome completo + CPF + telefone + procedimento + dia/horário de preferência já coletados | WhatsApp (equipe) + E-mail (gravação no CRM Belle **desligada** desde 29/09: o token atual recebe 403 Forbidden) |
 | `pedido_humano` | Cliente pede falar com humano, ou pergunta algo fora da tabela de preços | WhatsApp (equipe) |
 | `preco` | Só quando o cliente **condiciona** a marcação ao desconto ("só marco se tiver desconto") | WhatsApp (equipe) — "💰 Cliente quer desconto pra fechar" |
 
@@ -68,7 +68,7 @@ A Sofia **continua respondendo normalmente** mesmo depois de um handoff — ela 
 ## 7. Integrações externas
 
 - **WhatsApp**: API oficial da Meta (Cloud API), número dedicado da Sofist Laser.
-- **Belle Software (CRM)**: endpoint `cliente/gravar` grava o lead automaticamente no handoff de agenda (nome, telefone, CPF, procedimento, observação). Token de integração fixo por estabelecimento (`codEstab: 1`).
+- **Belle Software (CRM)**: **desligado desde 29/09** — o endpoint `cliente/gravar` responde 403 Forbidden com o token atual; precisa de um token de integração válido do suporte Belle pra religar o nó "Gravar Lead no Belle Software". Antes: gravava o lead automaticamente no handoff de agenda (nome, telefone, CPF, procedimento, observação). Token de integração fixo por estabelecimento (`codEstab: 1`).
 - **Agendamento real**: continua manual — a equipe finaliza no Belle Software depois de receber a notificação.
 
 ---
