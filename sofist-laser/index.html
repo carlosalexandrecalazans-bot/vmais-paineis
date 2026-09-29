@@ -794,10 +794,19 @@
 
   async function updateStage(leadId, novaEtapa) {
     const alteradoPor = attendantInput.value.trim() || 'Não informado';
+    let valorVenda = null;
+    if (novaEtapa === 'venda') {
+      const input = window.prompt('Valor da venda (R$) — necessário pra registrar a conversão pro Meta:');
+      if (input === null) return;
+      valorVenda = parseFloat(input.replace(',', '.'));
+      if (!valorVenda || valorVenda <= 0) { showToast('Valor inválido — venda não registrada'); return; }
+    }
     try {
+      const body = { lead_id: leadId, nova_etapa: novaEtapa, alterado_por: alteradoPor };
+      if (valorVenda) body.valor_venda = valorVenda;
       const res = await fetch(API_BASE + '/funil-atualizar-etapa', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lead_id: leadId, nova_etapa: novaEtapa, alterado_por: alteradoPor })
+        body: JSON.stringify(body)
       });
       if (!res.ok) throw new Error('Falha ao atualizar');
       const lead = leads.find(l => l.id === leadId);
