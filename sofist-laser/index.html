@@ -310,7 +310,6 @@
   .stage-aguardando_equipe { background: #F5D9A8; color: #8A5A00; }
   .stage-aguardando_agenda { background: #E0C9E0; color: #6B2E6B; }
   .stage-agendado { background: #E7D8A6; color: #7A5E00; }
-  .stage-compareceu { background: #D9E7CF; color: #3F6B2E; }
   .stage-venda { background: #CFE7CF; color: #2E6B34; }
   .stage-perdido { background: #F2D7C9; color: #A4442E; }
 
@@ -503,12 +502,11 @@
     { id: 'em_resgate', label: 'Em resgate', cor: '#D89A4A' },
     { id: 'aguardando_agenda', label: 'Aguardando agenda', cor: '#8f5f8f' },
     { id: 'agendado', label: 'Agendado', cor: '#D8B04A' },
-    { id: 'compareceu', label: 'Compareceu', cor: '#7FAE6B' },
     { id: 'venda', label: 'Venda', cor: '#4C6B47' },
     { id: 'rmkt', label: 'Rmkt', cor: '#8fa3b0' },
     { id: 'perdido', label: 'Perdido', cor: '#A4442E' }
   ];
-  const NEXT_STAGE = { novo: 'em_conversa', em_conversa: 'em_resgate', em_resgate: 'rmkt', rmkt: 'aguardando_agenda', aguardando_equipe: 'aguardando_agenda', aguardando_agenda: 'agendado', agendado: 'compareceu', compareceu: 'venda' };
+  const NEXT_STAGE = { novo: 'em_conversa', em_conversa: 'em_resgate', em_resgate: 'rmkt', rmkt: 'aguardando_agenda', aguardando_equipe: 'aguardando_agenda', aguardando_agenda: 'agendado', agendado: 'venda' };
 
   let leads = [];
   let leadAberto = null;
@@ -1139,7 +1137,7 @@
   function classificarTrafego(lead) {
     const etapa = lead.etapa_funil || 'novo';
     if (etapa === 'perdido') return 'negaram';
-    if (['venda', 'compareceu', 'agendado', 'aguardando_agenda'].includes(etapa)) return 'avancou';
+    if (['venda', 'agendado', 'aguardando_agenda'].includes(etapa)) return 'avancou';
     if (etapa === 'aguardando_equipe') return 'aguardando_resposta_nossa'; // Sofia passou pra equipe: a resposta é nossa
     const hist = Array.isArray(lead.historico_conversa) ? lead.historico_conversa : [];
     if (hist.length === 0 || etapa === 'novo') return 'primeiro_atendimento';
