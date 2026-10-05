@@ -43,6 +43,7 @@ async function entregarAoN8n(url, body, headers) {
     const inicio = Date.now();
     try {
       const r = await fetch(url, { method: "POST", headers, body });
+      if (!r.ok) console.log(`n8n respondeu ${r.status} em ${url}`);
       if (r.status < 500) return r.ok;
       console.log(`n8n respondeu ${r.status} (tentativa ${i})`);
     } catch (e) {
@@ -130,6 +131,7 @@ async function gravarNoSupabase(env, linhas) {
       body: JSON.stringify(linhas),
     });
     if (!r.ok) console.log(`Supabase respondeu ${r.status}: ${await r.text()}`);
+    else console.log(`Supabase: ${linhas.length} mensagem(ns) gravada(s)`);
   } catch (e) {
     console.log(`Supabase inalcançável: ${e}`);
   }
@@ -196,6 +198,21 @@ export default {
     } catch (e) {
       ctx.waitUntil(entregarAoN8n(N8N_SOFIST, bodyText, headers));
       return OK();
+    }
+
+    // Registro de diagnóstico: o que a Meta mandou (sem conteúdo das mensagens).
+    for (const entry of payload?.entry || []) {
+      for (const change of entry?.changes || []) {
+        const v = change?.value || {};
+        console.log(JSON.stringify({
+          field: change?.field,
+          phone_number_id: v.metadata?.phone_number_id,
+          numero: v.metadata?.display_phone_number,
+          mensagens: (v.messages || []).map((m) => m.type),
+          status: (v.statuses || []).map((s) => s.status),
+          rota: v.metadata?.phone_number_id === PHONE_STAR_MOTORS ? "star_motors" : "sofist",
+        }));
+      }
     }
 
     const mensagens = mensagensDoPayload(payload);
