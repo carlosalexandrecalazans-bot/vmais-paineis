@@ -493,6 +493,41 @@
 <script>
   const API_BASE = 'https://vmais.app.n8n.cloud/webhook';
   const SLUG = new URLSearchParams(location.search).get('slug') || 'estetica-taynara-fagundes';
+  // ---------- Chave de acesso do painel ----------
+  // Cada clínica tem uma chave. Ela fica salva só neste navegador e vai junto em toda chamada ao n8n.
+  const CHAVE_STORAGE = 'painel_chave_' + SLUG;
+  function lerChave() {
+    try { return localStorage.getItem(CHAVE_STORAGE) || ''; } catch (e) { return ''; }
+  }
+  let chaveCancelada = false; // se a pessoa cancelar, não pergunta de novo a cada atualização automática
+  function pedirChave(mensagem) {
+    if (chaveCancelada) return '';
+    const chave = (window.prompt(mensagem || 'Digite a chave de acesso do painel:') || '').trim();
+    if (!chave) chaveCancelada = true;
+    try { if (chave) localStorage.setItem(CHAVE_STORAGE, chave); } catch (e) {}
+    return chave;
+  }
+  function comChave(url, opts, chave) {
+    if (opts && opts.body) {
+      const corpo = JSON.parse(opts.body);
+      corpo.slug = corpo.slug || SLUG;
+      corpo.chave = chave;
+      return [url, Object.assign({}, opts, { body: JSON.stringify(corpo) })];
+    }
+    const sep = url.indexOf('?') === -1 ? '?' : '&';
+    return [url + sep + 'chave=' + encodeURIComponent(chave), opts];
+  }
+  async function apiFetch(url, opts) {
+    let chave = lerChave() || pedirChave();
+    let res = await fetch(...comChave(url, opts, chave));
+    if (res.status === 401) {
+      try { localStorage.removeItem(CHAVE_STORAGE); } catch (e) {}
+      chave = pedirChave('Chave inválida. Digite a chave de acesso do painel:');
+      if (!chave) return res;
+      res = await fetch(...comChave(url, opts, chave));
+    }
+    return res;
+  }
 
   // Ordem das colunas do Kanban (e das opções de "Mover p/…"). `cor` é a fatia no gráfico de pizza.
   const STAGES = [
@@ -804,7 +839,7 @@
     try {
       const body = { lead_id: leadId, nova_etapa: novaEtapa, alterado_por: alteradoPor };
       if (valorVenda) body.valor_venda = valorVenda;
-      const res = await fetch(API_BASE + '/funil-atualizar-etapa', {
+      const res = await apiFetch(API_BASE + '/funil-atualizar-etapa', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
@@ -863,7 +898,7 @@
     const btn = document.getElementById('chatSendBtn');
     btn.disabled = true;
     try {
-      const res = await fetch(API_BASE + '/funil-responder-humano', {
+      const res = await apiFetch(API_BASE + '/funil-responder-humano', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slug: SLUG, lead_id: lead.id, telefone: lead.telefone, mensagem: texto })
       });
@@ -894,7 +929,7 @@
     const legenda = document.getElementById('fotoLegendaInput').value.trim();
     if (!url) { showToast('Cola o link da imagem primeiro'); return; }
     try {
-      const res = await fetch(API_BASE + '/funil-enviar-midia', {
+      const res = await apiFetch(API_BASE + '/funil-enviar-midia', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lead_id: leadAberto, image_url: url, caption: legenda })
       });
@@ -915,7 +950,7 @@
     const lead = leads.find(l => l.id === leadAberto);
     if (!lead) return;
     try {
-      const res = await fetch(API_BASE + '/funil-assumir-humano', {
+      const res = await apiFetch(API_BASE + '/funil-assumir-humano', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lead_id: lead.id })
       });
@@ -932,7 +967,7 @@
     const lead = leads.find(l => l.id === leadAberto);
     if (!lead) return;
     try {
-      const res = await fetch(API_BASE + '/funil-devolver-ia', {
+      const res = await apiFetch(API_BASE + '/funil-devolver-ia', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lead_id: lead.id })
       });
@@ -1234,7 +1269,7 @@
       document.getElementById('mainFunil').innerHTML = '<div class="empty">Carregando leads…</div>';
     }
     try {
-      const res = await fetch(API_BASE + '/funil-leads?slug=' + encodeURIComponent(SLUG));
+      const res = await apiFetch(API_BASE + '/funil-leads?slug=' + encodeURIComponent(SLUG));
       if (!res.ok) throw new Error('Falha ao carregar');
       const data = await res.json();
       leads = data.leads || [];
