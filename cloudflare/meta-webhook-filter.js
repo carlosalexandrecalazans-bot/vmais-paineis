@@ -9,9 +9,15 @@
 //
 // Star Motors
 // - TODA mensagem de cliente (texto, foto, áudio, botão) é gravada direto no
-//   Supabase (tabela star_motors_mensagens) — sem gastar execução do n8n.
-// - Só o toque nos botões da campanha ("Quero saber mais" / "Não tenho
-//   interesse", ou sair/parar...) segue pro n8n, que marca a planilha.
+//   Supabase (tabela star_motors_mensagens).
+// - O toque nos botões da campanha ("Quero saber mais" / "Não tenho
+//   interesse", ou sair/parar...) segue pro n8n de respostas, que marca a planilha.
+// - Agrupamento pro Aquecimento: o cliente costuma mandar várias mensagens em
+//   sequência ("oi", "tudo bem?", "qual o valor?"). O Worker espera
+//   AGRUPAR_MS sem mensagem nova daquele telefone e manda os textos juntos numa
+//   única mensagem pro n8n — uma execução e uma resposta da IA em vez de várias.
+//   Foto e áudio seguem um por um (o n8n analisa/transcreve cada mídia).
+//   A marcação enviado_ao_n8n=true no Supabase indica o que já foi pro Aquecimento.
 //
 // Variáveis do Worker (Settings > Variables and Secrets):
 // - SUPABASE_KEY (secret): service_role key do projeto Supabase.
@@ -19,6 +25,7 @@
 
 const N8N_SOFIST = "https://vmais.app.n8n.cloud/webhook/ctwa-taynara-sofist";
 const N8N_STAR_MOTORS = "https://vmais.app.n8n.cloud/webhook/star-motors-respostas";
+const N8N_STAR_AQUECIMENTO = "https://vmais.app.n8n.cloud/webhook/star-aquecimento";
 const SUPABASE_URL = "https://tishvpoxekxocyzdiaja.supabase.co";
 
 const PHONE_STAR_MOTORS = "1170154492850086";
@@ -28,6 +35,10 @@ const HEADERS_REPASSADOS = ["content-type", "x-hub-signature", "x-hub-signature-
 const TENTATIVAS = 3;
 const ESPERA_MS = 4000;
 const FALHA_RAPIDA_MS = 8000; // erro antes disso = n8n não processou, pode tentar de novo
+// Cloudflare encerra o waitUntil ~30s depois da resposta; 20s cobre a maior
+// parte das rajadas (dado de out/26: 436 de 1.391 mensagens vieram <20s da anterior).
+const AGRUPAR_MS = 20000;
+const JANELA_PENDENTES_MS = 10 * 60 * 1000; // só agrupa mensagens recentes ainda não enviadas
 
 function montarHeaders(req) {
   const h = new Headers({ "Content-Type": "application/json" });
@@ -114,26 +125,156 @@ function ehRespostaDaCampanha(msg) {
     /^(sair|parar|pare|stop|cancelar|descadastrar)$/.test(t);
 }
 
+function headersSupabase(env, extra = {}) {
+  return {
+    apikey: env.SUPABASE_KEY,
+    Authorization: `Bearer ${env.SUPABASE_KEY}`,
+    "Content-Type": "application/json",
+    ...extra,
+  };
+}
+
 async function gravarNoSupabase(env, linhas) {
   if (!env.SUPABASE_KEY) {
     console.log("SUPABASE_KEY não configurada — mensagens da Star Motors não foram gravadas");
-    return;
+    return false;
   }
   try {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/star_motors_mensagens?on_conflict=wamid`, {
       method: "POST",
-      headers: {
-        apikey: env.SUPABASE_KEY,
-        Authorization: `Bearer ${env.SUPABASE_KEY}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates,return=minimal",
-      },
+      headers: headersSupabase(env, { Prefer: "resolution=ignore-duplicates,return=minimal" }),
       body: JSON.stringify(linhas),
     });
     if (!r.ok) console.log(`Supabase respondeu ${r.status}: ${await r.text()}`);
     else console.log(`Supabase: ${linhas.length} mensagem(ns) gravada(s)`);
+    return r.ok;
   } catch (e) {
     console.log(`Supabase inalcançável: ${e}`);
+    return false;
+  }
+}
+
+// Chegou mensagem mais nova desse telefone depois desta? Então quem agrupa é ela.
+async function temMensagemMaisNova(env, telefone, desde) {
+  const q = new URLSearchParams({
+    select: "wamid",
+    telefone: `eq.${telefone}`,
+    recebido_em: `gt.${desde}`,
+    limit: "1",
+  });
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/star_motors_mensagens?${q}`, {
+    headers: headersSupabase(env),
+  });
+  if (!r.ok) throw new Error(`Supabase ${r.status}: ${await r.text()}`);
+  return (await r.json()).length > 0;
+}
+
+// Marca como enviadas (de forma atômica) as mensagens pendentes do telefone e
+// devolve as que ESTA chamada pegou — duas chamadas nunca pegam a mesma linha.
+async function pegarPendentes(env, telefone) {
+  const desde = new Date(Date.now() - JANELA_PENDENTES_MS).toISOString();
+  const q = new URLSearchParams({
+    telefone: `eq.${telefone}`,
+    enviado_ao_n8n: "is.false",
+    recebido_em: `gte.${desde}`,
+    select: "wamid,telefone,nome,tipo,texto,raw,recebido_em",
+  });
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/star_motors_mensagens?${q}`, {
+    method: "PATCH",
+    headers: headersSupabase(env, { Prefer: "return=representation" }),
+    body: JSON.stringify({ enviado_ao_n8n: true }),
+  });
+  if (!r.ok) throw new Error(`Supabase ${r.status}: ${await r.text()}`);
+  const linhas = await r.json();
+  return linhas.sort((a, b) => String(a.recebido_em).localeCompare(String(b.recebido_em)));
+}
+
+async function desmarcar(env, wamids) {
+  if (!wamids.length) return;
+  const q = new URLSearchParams({ wamid: `in.(${wamids.map((w) => `"${w}"`).join(",")})` });
+  await fetch(`${SUPABASE_URL}/rest/v1/star_motors_mensagens?${q}`, {
+    method: "PATCH",
+    headers: headersSupabase(env, { Prefer: "return=minimal" }),
+    body: JSON.stringify({ enviado_ao_n8n: false }),
+  }).catch((e) => console.log(`Supabase inalcançável ao desmarcar: ${e}`));
+}
+
+const EH_MIDIA = (tipo) => ["image", "audio", "voice"].includes(tipo);
+
+// Monta os payloads no formato da Meta (o n8n lê messages[0]):
+// cada foto/áudio vai sozinho; o resto vira UMA mensagem de texto com as linhas juntas.
+function montarPayloadsAgrupados(base, linhas) {
+  const envelope = (msg, nome) => ({
+    object: base.object || "whatsapp_business_account",
+    entry: [{
+      id: base.entry?.[0]?.id,
+      changes: [{
+        field: "messages",
+        value: {
+          messaging_product: "whatsapp",
+          metadata: base.entry?.[0]?.changes?.[0]?.value?.metadata,
+          contacts: [{ profile: { name: nome || "" }, wa_id: msg.from }],
+          messages: [msg],
+        },
+      }],
+    }],
+  });
+
+  const nome = [...linhas].reverse().find((l) => l.nome)?.nome || null;
+  const payloads = [];
+  const textos = [];
+  let ultima = null;
+  let referral = null;
+  for (const l of linhas) {
+    const raw = l.raw || {};
+    referral = referral || raw.referral || null;
+    if (EH_MIDIA(l.tipo)) {
+      payloads.push(envelope(raw, nome));
+      // legenda de foto também entra no texto agrupado
+      if (raw.image?.caption) textos.push(raw.image.caption);
+    } else {
+      if (l.texto) textos.push(l.texto);
+      ultima = raw;
+    }
+  }
+  if (textos.length > 0) {
+    const ref = ultima || linhas[linhas.length - 1].raw || {};
+    const msg = {
+      from: ref.from || linhas[0].telefone,
+      id: ref.id || linhas[linhas.length - 1].wamid,
+      timestamp: ref.timestamp,
+      type: "text",
+      text: { body: textos.join("\n") },
+    };
+    if (referral) msg.referral = referral;
+    payloads.push(envelope(msg, nome));
+  }
+  return payloads;
+}
+
+async function agruparEEnviarAquecimento(env, payloadMsg, telefone, recebidoEm, headers) {
+  await new Promise((ok) => setTimeout(ok, AGRUPAR_MS));
+  try {
+    if (await temMensagemMaisNova(env, telefone, recebidoEm)) {
+      console.log(`Aquecimento: ${telefone} mandou mensagem nova — fica pra próxima`);
+      return;
+    }
+    const linhas = await pegarPendentes(env, telefone);
+    if (linhas.length === 0) return;
+    const payloads = montarPayloadsAgrupados(payloadMsg, linhas);
+    console.log(`Aquecimento: ${linhas.length} mensagem(ns) de ${telefone} → ${payloads.length} envio(s)`);
+    for (const p of payloads) {
+      const ok = await entregarAoN8n(N8N_STAR_AQUECIMENTO, JSON.stringify(p), headers);
+      if (!ok) {
+        // devolve pra fila; a próxima mensagem do cliente leva junto
+        await desmarcar(env, linhas.map((l) => l.wamid));
+        return;
+      }
+    }
+  } catch (e) {
+    // Supabase fora: não perde a mensagem, manda do jeito antigo (uma por uma)
+    console.log(`Agrupamento falhou (${e}) — enviando sem agrupar`);
+    await entregarAoN8n(N8N_STAR_AQUECIMENTO, JSON.stringify(payloadMsg), headers);
   }
 }
 
@@ -161,10 +302,31 @@ async function processarStarMotors(env, payloadMsg, headers) {
     });
   }
 
-  let enviado = false;
-  if (temBotao) enviado = await entregarAoN8n(N8N_STAR_MOTORS, JSON.stringify(payloadMsg), headers);
-  for (const l of linhas) l.enviado_ao_n8n = l.botao && enviado;
-  await gravarNoSupabase(env, linhas);
+  for (const l of linhas) l.enviado_ao_n8n = false;
+  const gravou = await gravarNoSupabase(env, linhas);
+
+  if (temBotao) await entregarAoN8n(N8N_STAR_MOTORS, JSON.stringify(payloadMsg), headers);
+
+  if (!gravou) {
+    // sem Supabase não dá pra agrupar: manda direto, como antes
+    await entregarAoN8n(N8N_STAR_AQUECIMENTO, JSON.stringify(payloadMsg), headers);
+    return;
+  }
+  const telefone = linhas[linhas.length - 1].telefone;
+  const recebidoEm = await recebidoEmDe(env, linhas[linhas.length - 1].wamid);
+  await agruparEEnviarAquecimento(env, payloadMsg, telefone, recebidoEm, headers);
+}
+
+async function recebidoEmDe(env, wamid) {
+  try {
+    const q = new URLSearchParams({ select: "recebido_em", wamid: `eq.${wamid}` });
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/star_motors_mensagens?${q}`, {
+      headers: headersSupabase(env),
+    });
+    const [l] = await r.json();
+    if (l?.recebido_em) return l.recebido_em;
+  } catch (e) {}
+  return new Date().toISOString();
 }
 
 // ---------- Worker ----------
