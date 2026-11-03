@@ -15,6 +15,8 @@
 //   Supabase (tabela star_motors_mensagens).
 // - O toque nos botões da campanha ("Quero saber mais" / "Não tenho
 //   interesse", ou sair/parar...) segue pro n8n de respostas, que marca a planilha.
+// - As demais mensagens vão também pro n8n do aquecimento com IA
+//   (/webhook/star-aquecimento), controladas pela variável AQUECIMENTO_LIBERADOS.
 // - Agrupamento pro Aquecimento: o cliente costuma mandar várias mensagens em
 //   sequência ("oi", "tudo bem?", "qual o valor?"). O Worker espera
 //   AGRUPAR_MS sem mensagem nova daquele telefone e manda os textos juntos numa
@@ -25,7 +27,9 @@
 //
 // Variáveis do Worker (Settings > Variables and Secrets):
 // - SUPABASE_KEY (secret): service_role key do projeto Supabase.
-// - VERIFY_TOKEN (opcional): token de verificação do webhook na Meta.
+// - VERIFY_TOKEN (secret): token de verificação do webhook na Meta.
+// - AQUECIMENTO_LIBERADOS (texto): números separados por vírgula = só esses;
+//   "*" = todos; vazia ou ausente = ninguém.
 
 const N8N_SOFIST = "https://vmais.app.n8n.cloud/webhook/ctwa-taynara-sofist";
 const N8N_STAR_MOTORS = "https://vmais.app.n8n.cloud/webhook/star-motors-respostas";
@@ -33,7 +37,6 @@ const N8N_STAR_AQUECIMENTO = "https://vmais.app.n8n.cloud/webhook/star-aquecimen
 const SUPABASE_URL = "https://tishvpoxekxocyzdiaja.supabase.co";
 
 const PHONE_STAR_MOTORS = "1170154492850086";
-const VERIFY_TOKEN_PADRAO = "6ce7d877e49cbfdbfec65de6eafc3ee4e6e4d3861d0df402";
 
 const HEADERS_REPASSADOS = ["content-type", "x-hub-signature", "x-hub-signature-256", "user-agent"];
 const TENTATIVAS = 3;
@@ -161,8 +164,9 @@ async function gravarNoSupabase(env, tabela, linhas) {
 // ---------- Agrupamento de mensagens em sequência ----------
 
 // Cada fila = uma tabela do Supabase usada como buffer + o webhook do n8n que recebe.
-const FILA_STAR = { tabela: "star_motors_mensagens", url: N8N_STAR_AQUECIMENTO, rotulo: "Aquecimento", porNumero: false };
-const FILA_CTWA = { tabela: "whatsapp_buffer", url: N8N_SOFIST, rotulo: "CTWA", porNumero: true };
+// Na Star, toque de botão da campanha nunca vai pro aquecimento (filtroPendentes).
+const FILA_STAR = { tabela: "star_motors_mensagens", url: N8N_STAR_AQUECIMENTO, rotulo: "Aquecimento", porNumero: false, filtroPendentes: { botao: "is.false" } };
+const FILA_CTWA = { tabela: "whatsapp_buffer", url: N8N_SOFIST, rotulo: "CTWA", porNumero: true, filtroPendentes: {} };
 
 function filtroDoContato(fila, telefone, phoneId) {
   const f = { telefone: `eq.${telefone}` };
@@ -175,6 +179,7 @@ async function temMensagemMaisNova(env, fila, telefone, phoneId, desde) {
   const q = new URLSearchParams({
     select: "wamid",
     ...filtroDoContato(fila, telefone, phoneId),
+    ...fila.filtroPendentes,
     recebido_em: `gt.${desde}`,
     limit: "1",
   });
@@ -191,6 +196,7 @@ async function pegarPendentes(env, fila, telefone, phoneId) {
   const desde = new Date(Date.now() - JANELA_PENDENTES_MS).toISOString();
   const q = new URLSearchParams({
     ...filtroDoContato(fila, telefone, phoneId),
+    ...fila.filtroPendentes,
     enviado_ao_n8n: "is.false",
     recebido_em: `gte.${desde}`,
     select: "wamid,telefone,nome,tipo,texto,raw,recebido_em",
@@ -320,27 +326,52 @@ function linhasDoPayload(payloadMsg) {
 
 // ---------- Star Motors ----------
 
+// Compara números ignorando o 9º dígito (a Meta manda o wa_id BR sem ele).
+function digitosBR(t) {
+  let d = String(t || "").replace(/\D/g, "");
+  if (d.startsWith("55") && d.length === 13 && d[4] === "9") d = d.slice(0, 4) + d.slice(5);
+  return d;
+}
+
+function liberadoNoAquecimento(env, telefone) {
+  const lista = String(env.AQUECIMENTO_LIBERADOS || "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  if (lista.includes("*")) return true;
+  const alvo = digitosBR(telefone);
+  return lista.some((n) => digitosBR(n) === alvo);
+}
+
 async function processarStarMotors(env, payloadMsg, headers) {
-  const linhas = linhasDoPayload(payloadMsg).map((l) => {
-    const botao = ehRespostaDaCampanha(l.raw);
-    return {
-      ...l,
-      midia_id: midiaIdDe(l.raw),
-      botao,
-      enviado_em: l.raw.timestamp ? new Date(Number(l.raw.timestamp) * 1000).toISOString() : null,
-    };
-  });
+  const linhas = linhasDoPayload(payloadMsg).map((l) => ({
+    ...l,
+    midia_id: midiaIdDe(l.raw),
+    botao: ehRespostaDaCampanha(l.raw),
+    enviado_em: l.raw.timestamp ? new Date(Number(l.raw.timestamp) * 1000).toISOString() : null,
+  }));
   const temBotao = linhas.some((l) => l.botao);
+
+  // Botão da campanha: enviado_ao_n8n diz se o n8n de respostas recebeu.
+  let enviado = false;
+  if (temBotao) enviado = await entregarAoN8n(N8N_STAR_MOTORS, JSON.stringify(payloadMsg), headers);
+  for (const l of linhas) l.enviado_ao_n8n = l.botao && enviado;
   const gravou = await gravarNoSupabase(env, FILA_STAR.tabela, linhas);
 
-  if (temBotao) await entregarAoN8n(N8N_STAR_MOTORS, JSON.stringify(payloadMsg), headers);
+  // Aquecimento com IA: tudo que NÃO é toque de botão, só pros números liberados.
+  const paraAquecimento = linhas.filter((l) => !l.botao && liberadoNoAquecimento(env, l.telefone));
+  if (paraAquecimento.length === 0) return;
 
   if (!gravou) {
     // sem Supabase não dá pra agrupar: manda direto, como antes
-    await entregarAoN8n(N8N_STAR_AQUECIMENTO, JSON.stringify(payloadMsg), headers);
+    const value = payloadMsg.entry[0].changes[0].value;
+    const change = payloadMsg.entry[0].changes[0];
+    const corpo = {
+      ...payloadMsg,
+      entry: [{ ...payloadMsg.entry[0], changes: [{ ...change, value: { ...value, messages: paraAquecimento.map((l) => l.raw) } }] }],
+    };
+    await entregarAoN8n(N8N_STAR_AQUECIMENTO, JSON.stringify(corpo), headers);
     return;
   }
-  const ultima = linhas[linhas.length - 1];
+  const ultima = paraAquecimento[paraAquecimento.length - 1];
   const recebidoEm = await recebidoEmDe(env, FILA_STAR, ultima.wamid);
   await agruparEEnviar(env, FILA_STAR, payloadMsg, ultima.telefone, ultima.phone_number_id, recebidoEm, headers);
 }
@@ -379,8 +410,9 @@ export default {
       // Verificação do webhook pela Meta (hub.challenge) — respondida aqui,
       // sem depender do n8n estar ligado.
       const url = new URL(request.url);
-      const token = env.VERIFY_TOKEN || VERIFY_TOKEN_PADRAO;
-      if (url.searchParams.get("hub.mode") === "subscribe" &&
+      const token = env.VERIFY_TOKEN || "";
+      if (token &&
+          url.searchParams.get("hub.mode") === "subscribe" &&
           url.searchParams.get("hub.verify_token") === token) {
         return new Response(url.searchParams.get("hub.challenge") || "", { status: 200 });
       }
