@@ -1,11 +1,14 @@
 // Cloudflare Worker — filtro do webhook da Meta (WhatsApp) na frente do n8n.
 // Atende dois números (roteia pelo phone_number_id):
 //
-// Sofist Laser
+// Sofist Laser e Taynara Fagundes (mesmo webhook do CTWA no n8n)
 // - Status (enviado/entregue/lido): responde OK e não repassa.
 // - Mensagem de cliente: responde OK pra Meta NA HORA (evita o reenvio que a
 //   Meta faz quando a resposta passa de ~20s) e entrega ao n8n em segundo plano.
 //   Se o n8n recusar/cair logo de cara, tenta de novo algumas vezes.
+// - Agrupamento (igual ao da Star Motors, abaixo): a mensagem é gravada na
+//   tabela whatsapp_buffer e o Worker espera AGRUPAR_MS sem mensagem nova do
+//   mesmo telefone antes de mandar pro n8n — textos seguidos viram um só envio.
 //
 // Star Motors
 // - TODA mensagem de cliente (texto, foto, áudio, botão) é gravada direto no
@@ -16,8 +19,9 @@
 //   sequência ("oi", "tudo bem?", "qual o valor?"). O Worker espera
 //   AGRUPAR_MS sem mensagem nova daquele telefone e manda os textos juntos numa
 //   única mensagem pro n8n — uma execução e uma resposta da IA em vez de várias.
-//   Foto e áudio seguem um por um (o n8n analisa/transcreve cada mídia).
-//   A marcação enviado_ao_n8n=true no Supabase indica o que já foi pro Aquecimento.
+//   Só textos seguidos são juntados; foto, áudio, botão e o resto seguem um por
+//   um e sem alteração, na ordem em que chegaram (o n8n analisa/transcreve cada mídia).
+//   A marcação enviado_ao_n8n=true no Supabase indica o que já foi pro n8n.
 //
 // Variáveis do Worker (Settings > Variables and Secrets):
 // - SUPABASE_KEY (secret): service_role key do projeto Supabase.
@@ -85,7 +89,7 @@ function phoneIdDe(m) {
   return m.entry[0].changes[0].value?.metadata?.phone_number_id || "";
 }
 
-// ---------- Star Motors ----------
+// ---------- Leitura das mensagens ----------
 
 function textoDaMensagem(msg) {
   switch (msg.type) {
@@ -134,19 +138,19 @@ function headersSupabase(env, extra = {}) {
   };
 }
 
-async function gravarNoSupabase(env, linhas) {
+async function gravarNoSupabase(env, tabela, linhas) {
   if (!env.SUPABASE_KEY) {
-    console.log("SUPABASE_KEY não configurada — mensagens da Star Motors não foram gravadas");
+    console.log(`SUPABASE_KEY não configurada — mensagens não foram gravadas em ${tabela}`);
     return false;
   }
   try {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/star_motors_mensagens?on_conflict=wamid`, {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${tabela}?on_conflict=wamid`, {
       method: "POST",
       headers: headersSupabase(env, { Prefer: "resolution=ignore-duplicates,return=minimal" }),
       body: JSON.stringify(linhas),
     });
     if (!r.ok) console.log(`Supabase respondeu ${r.status}: ${await r.text()}`);
-    else console.log(`Supabase: ${linhas.length} mensagem(ns) gravada(s)`);
+    else console.log(`Supabase: ${linhas.length} mensagem(ns) gravada(s) em ${tabela}`);
     return r.ok;
   } catch (e) {
     console.log(`Supabase inalcançável: ${e}`);
@@ -154,15 +158,27 @@ async function gravarNoSupabase(env, linhas) {
   }
 }
 
+// ---------- Agrupamento de mensagens em sequência ----------
+
+// Cada fila = uma tabela do Supabase usada como buffer + o webhook do n8n que recebe.
+const FILA_STAR = { tabela: "star_motors_mensagens", url: N8N_STAR_AQUECIMENTO, rotulo: "Aquecimento", porNumero: false };
+const FILA_CTWA = { tabela: "whatsapp_buffer", url: N8N_SOFIST, rotulo: "CTWA", porNumero: true };
+
+function filtroDoContato(fila, telefone, phoneId) {
+  const f = { telefone: `eq.${telefone}` };
+  if (fila.porNumero) f.phone_number_id = `eq.${phoneId}`;
+  return f;
+}
+
 // Chegou mensagem mais nova desse telefone depois desta? Então quem agrupa é ela.
-async function temMensagemMaisNova(env, telefone, desde) {
+async function temMensagemMaisNova(env, fila, telefone, phoneId, desde) {
   const q = new URLSearchParams({
     select: "wamid",
-    telefone: `eq.${telefone}`,
+    ...filtroDoContato(fila, telefone, phoneId),
     recebido_em: `gt.${desde}`,
     limit: "1",
   });
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/star_motors_mensagens?${q}`, {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${fila.tabela}?${q}`, {
     headers: headersSupabase(env),
   });
   if (!r.ok) throw new Error(`Supabase ${r.status}: ${await r.text()}`);
@@ -171,15 +187,15 @@ async function temMensagemMaisNova(env, telefone, desde) {
 
 // Marca como enviadas (de forma atômica) as mensagens pendentes do telefone e
 // devolve as que ESTA chamada pegou — duas chamadas nunca pegam a mesma linha.
-async function pegarPendentes(env, telefone) {
+async function pegarPendentes(env, fila, telefone, phoneId) {
   const desde = new Date(Date.now() - JANELA_PENDENTES_MS).toISOString();
   const q = new URLSearchParams({
-    telefone: `eq.${telefone}`,
+    ...filtroDoContato(fila, telefone, phoneId),
     enviado_ao_n8n: "is.false",
     recebido_em: `gte.${desde}`,
     select: "wamid,telefone,nome,tipo,texto,raw,recebido_em",
   });
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/star_motors_mensagens?${q}`, {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${fila.tabela}?${q}`, {
     method: "PATCH",
     headers: headersSupabase(env, { Prefer: "return=representation" }),
     body: JSON.stringify({ enviado_ao_n8n: true }),
@@ -189,20 +205,31 @@ async function pegarPendentes(env, telefone) {
   return linhas.sort((a, b) => String(a.recebido_em).localeCompare(String(b.recebido_em)));
 }
 
-async function desmarcar(env, wamids) {
+async function desmarcar(env, fila, wamids) {
   if (!wamids.length) return;
   const q = new URLSearchParams({ wamid: `in.(${wamids.map((w) => `"${w}"`).join(",")})` });
-  await fetch(`${SUPABASE_URL}/rest/v1/star_motors_mensagens?${q}`, {
+  await fetch(`${SUPABASE_URL}/rest/v1/${fila.tabela}?${q}`, {
     method: "PATCH",
     headers: headersSupabase(env, { Prefer: "return=minimal" }),
     body: JSON.stringify({ enviado_ao_n8n: false }),
   }).catch((e) => console.log(`Supabase inalcançável ao desmarcar: ${e}`));
 }
 
-const EH_MIDIA = (tipo) => ["image", "audio", "voice"].includes(tipo);
+async function recebidoEmDe(env, fila, wamid) {
+  try {
+    const q = new URLSearchParams({ select: "recebido_em", wamid: `eq.${wamid}` });
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${fila.tabela}?${q}`, {
+      headers: headersSupabase(env),
+    });
+    const [l] = await r.json();
+    if (l?.recebido_em) return l.recebido_em;
+  } catch (e) {}
+  return new Date().toISOString();
+}
 
-// Monta os payloads no formato da Meta (o n8n lê messages[0]):
-// cada foto/áudio vai sozinho; o resto vira UMA mensagem de texto com as linhas juntas.
+// Monta os payloads no formato da Meta (o n8n lê messages[0]), na ordem em que
+// chegaram: cada sequência de textos vira UMA mensagem de texto com as linhas
+// juntas; qualquer outro tipo (foto, áudio, botão...) vai sozinho e sem alteração.
 function montarPayloadsAgrupados(base, linhas) {
   const envelope = (msg, nome) => ({
     object: base.object || "whatsapp_business_account",
@@ -222,88 +249,89 @@ function montarPayloadsAgrupados(base, linhas) {
 
   const nome = [...linhas].reverse().find((l) => l.nome)?.nome || null;
   const payloads = [];
-  const textos = [];
-  let ultima = null;
-  let referral = null;
+  let textos = [];
+  const fecharTextos = () => {
+    if (textos.length === 0) return;
+    const ultima = textos[textos.length - 1];
+    // referral (anúncio de origem / ctwa_clid) costuma vir na primeira mensagem
+    const referral = textos.map((r) => r.referral).find(Boolean);
+    const msg = textos.length === 1 ? ultima : {
+      from: ultima.from,
+      id: ultima.id,
+      timestamp: ultima.timestamp,
+      type: "text",
+      text: { body: textos.map((r) => r.text?.body || "").filter(Boolean).join("\n") },
+    };
+    if (referral && !msg.referral) msg.referral = referral;
+    payloads.push(envelope(msg, nome));
+    textos = [];
+  };
   for (const l of linhas) {
     const raw = l.raw || {};
-    referral = referral || raw.referral || null;
-    if (EH_MIDIA(l.tipo)) {
-      payloads.push(envelope(raw, nome));
-      // legenda de foto também entra no texto agrupado
-      if (raw.image?.caption) textos.push(raw.image.caption);
-    } else {
-      if (l.texto) textos.push(l.texto);
-      ultima = raw;
-    }
+    if (raw.type === "text") { textos.push(raw); continue; }
+    fecharTextos();
+    payloads.push(envelope(raw, nome));
   }
-  if (textos.length > 0) {
-    const ref = ultima || linhas[linhas.length - 1].raw || {};
-    const msg = {
-      from: ref.from || linhas[0].telefone,
-      id: ref.id || linhas[linhas.length - 1].wamid,
-      timestamp: ref.timestamp,
-      type: "text",
-      text: { body: textos.join("\n") },
-    };
-    if (referral) msg.referral = referral;
-    payloads.push(envelope(msg, nome));
-  }
+  fecharTextos();
   return payloads;
 }
 
-async function agruparEEnviarAquecimento(env, payloadMsg, telefone, recebidoEm, headers) {
+async function agruparEEnviar(env, fila, payloadMsg, telefone, phoneId, recebidoEm, headers) {
   await new Promise((ok) => setTimeout(ok, AGRUPAR_MS));
   try {
-    if (await temMensagemMaisNova(env, telefone, recebidoEm)) {
-      console.log(`Aquecimento: ${telefone} mandou mensagem nova — fica pra próxima`);
+    if (await temMensagemMaisNova(env, fila, telefone, phoneId, recebidoEm)) {
+      console.log(`${fila.rotulo}: ${telefone} mandou mensagem nova — fica pra próxima`);
       return;
     }
-    const linhas = await pegarPendentes(env, telefone);
+    const linhas = await pegarPendentes(env, fila, telefone, phoneId);
     if (linhas.length === 0) return;
     const payloads = montarPayloadsAgrupados(payloadMsg, linhas);
-    console.log(`Aquecimento: ${linhas.length} mensagem(ns) de ${telefone} → ${payloads.length} envio(s)`);
+    console.log(`${fila.rotulo}: ${linhas.length} mensagem(ns) de ${telefone} → ${payloads.length} envio(s)`);
     for (const p of payloads) {
-      const ok = await entregarAoN8n(N8N_STAR_AQUECIMENTO, JSON.stringify(p), headers);
+      const ok = await entregarAoN8n(fila.url, JSON.stringify(p), headers);
       if (!ok) {
         // devolve pra fila; a próxima mensagem do cliente leva junto
-        await desmarcar(env, linhas.map((l) => l.wamid));
+        await desmarcar(env, fila, linhas.map((l) => l.wamid));
         return;
       }
     }
   } catch (e) {
     // Supabase fora: não perde a mensagem, manda do jeito antigo (uma por uma)
     console.log(`Agrupamento falhou (${e}) — enviando sem agrupar`);
-    await entregarAoN8n(N8N_STAR_AQUECIMENTO, JSON.stringify(payloadMsg), headers);
+    await entregarAoN8n(fila.url, JSON.stringify(payloadMsg), headers);
   }
 }
 
-async function processarStarMotors(env, payloadMsg, headers) {
+function linhasDoPayload(payloadMsg) {
   const value = payloadMsg.entry[0].changes[0].value;
   const nomes = {};
   for (const c of value.contacts || []) nomes[c.wa_id] = c.profile?.name || null;
+  return value.messages.map((msg) => ({
+    wamid: msg.id,
+    phone_number_id: value.metadata?.phone_number_id || null,
+    telefone: String(msg.from || ""),
+    nome: nomes[msg.from] || null,
+    tipo: msg.type || null,
+    texto: textoDaMensagem(msg),
+    raw: msg,
+    enviado_ao_n8n: false,
+  }));
+}
 
-  const linhas = [];
-  let temBotao = false;
-  for (const msg of value.messages) {
-    const botao = ehRespostaDaCampanha(msg);
-    temBotao = temBotao || botao;
-    linhas.push({
-      wamid: msg.id,
-      phone_number_id: value.metadata?.phone_number_id || null,
-      telefone: String(msg.from || ""),
-      nome: nomes[msg.from] || null,
-      tipo: msg.type || null,
-      texto: textoDaMensagem(msg),
-      midia_id: midiaIdDe(msg),
+// ---------- Star Motors ----------
+
+async function processarStarMotors(env, payloadMsg, headers) {
+  const linhas = linhasDoPayload(payloadMsg).map((l) => {
+    const botao = ehRespostaDaCampanha(l.raw);
+    return {
+      ...l,
+      midia_id: midiaIdDe(l.raw),
       botao,
-      enviado_em: msg.timestamp ? new Date(Number(msg.timestamp) * 1000).toISOString() : null,
-      raw: msg,
-    });
-  }
-
-  for (const l of linhas) l.enviado_ao_n8n = false;
-  const gravou = await gravarNoSupabase(env, linhas);
+      enviado_em: l.raw.timestamp ? new Date(Number(l.raw.timestamp) * 1000).toISOString() : null,
+    };
+  });
+  const temBotao = linhas.some((l) => l.botao);
+  const gravou = await gravarNoSupabase(env, FILA_STAR.tabela, linhas);
 
   if (temBotao) await entregarAoN8n(N8N_STAR_MOTORS, JSON.stringify(payloadMsg), headers);
 
@@ -312,21 +340,32 @@ async function processarStarMotors(env, payloadMsg, headers) {
     await entregarAoN8n(N8N_STAR_AQUECIMENTO, JSON.stringify(payloadMsg), headers);
     return;
   }
-  const telefone = linhas[linhas.length - 1].telefone;
-  const recebidoEm = await recebidoEmDe(env, linhas[linhas.length - 1].wamid);
-  await agruparEEnviarAquecimento(env, payloadMsg, telefone, recebidoEm, headers);
+  const ultima = linhas[linhas.length - 1];
+  const recebidoEm = await recebidoEmDe(env, FILA_STAR, ultima.wamid);
+  await agruparEEnviar(env, FILA_STAR, payloadMsg, ultima.telefone, ultima.phone_number_id, recebidoEm, headers);
 }
 
-async function recebidoEmDe(env, wamid) {
-  try {
-    const q = new URLSearchParams({ select: "recebido_em", wamid: `eq.${wamid}` });
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/star_motors_mensagens?${q}`, {
-      headers: headersSupabase(env),
-    });
-    const [l] = await r.json();
-    if (l?.recebido_em) return l.recebido_em;
-  } catch (e) {}
-  return new Date().toISOString();
+// ---------- Sofist Laser / Taynara (CTWA) ----------
+
+async function processarCtwa(env, payloadMsg, headers) {
+  const linhas = linhasDoPayload(payloadMsg);
+  const gravou = await gravarNoSupabase(env, FILA_CTWA.tabela, linhas);
+  if (!gravou) {
+    // sem Supabase não dá pra agrupar: manda direto, como antes
+    await entregarAoN8n(N8N_SOFIST, JSON.stringify(payloadMsg), headers);
+    return;
+  }
+  // de vez em quando apaga o que já passou de 7 dias (a tabela é só um buffer)
+  if (Math.random() < 0.02) {
+    const q = new URLSearchParams({ recebido_em: `lt.${new Date(Date.now() - 7 * 86400000).toISOString()}` });
+    await fetch(`${SUPABASE_URL}/rest/v1/${FILA_CTWA.tabela}?${q}`, {
+      method: "DELETE",
+      headers: headersSupabase(env, { Prefer: "return=minimal" }),
+    }).catch((e) => console.log(`Limpeza do buffer falhou: ${e}`));
+  }
+  const ultima = linhas[linhas.length - 1];
+  const recebidoEm = await recebidoEmDe(env, FILA_CTWA, ultima.wamid);
+  await agruparEEnviar(env, FILA_CTWA, payloadMsg, ultima.telefone, ultima.phone_number_id, recebidoEm, headers);
 }
 
 // ---------- Worker ----------
@@ -385,14 +424,12 @@ export default {
       });
     }
 
-    // Cada mensagem num POST próprio (o n8n da Sofist só lê entry[0].changes[0]).
+    // Cada mensagem num POST próprio (o n8n só lê entry[0].changes[0]). Em
+    // paralelo: cada uma espera AGRUPAR_MS e o waitUntil tem limite de ~30s.
     ctx.waitUntil(
-      (async () => {
-        for (const m of mensagens) {
-          if (phoneIdDe(m) === PHONE_STAR_MOTORS) await processarStarMotors(env, m, headers);
-          else await entregarAoN8n(N8N_SOFIST, JSON.stringify(m), headers);
-        }
-      })()
+      Promise.all(mensagens.map((m) =>
+        phoneIdDe(m) === PHONE_STAR_MOTORS ? processarStarMotors(env, m, headers) : processarCtwa(env, m, headers)
+      ))
     );
     return OK();
   },
