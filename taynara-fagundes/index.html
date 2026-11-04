@@ -517,6 +517,33 @@
     const sep = url.indexOf('?') === -1 ? '?' : '&';
     return [url + sep + 'chave=' + encodeURIComponent(chave), opts];
   }
+  // Leitura dos leads direto do Supabase (função segura painel_leads, que confere a chave do painel).
+  // Não passa pelo n8n, então não gasta execução. A chave publicável abaixo é pública por natureza:
+  // sozinha ela não lê nada; a função só devolve dados com a chave do painel correta.
+  const SUPABASE_URL = 'https://tishvpoxekxocyzdiaja.supabase.co';
+  const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_HLxjLEt9tWD_9VJeWBzdCg_7mNxU9A3';
+  async function buscarLeadsSupabase() {
+    async function chamar(chave) {
+      const res = await fetch(SUPABASE_URL + '/rest/v1/rpc/painel_leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: SUPABASE_PUBLISHABLE_KEY },
+        body: JSON.stringify({ p_slug: SLUG, p_chave: chave || '' })
+      });
+      if (!res.ok) throw new Error('Falha ao carregar');
+      return res.json();
+    }
+    let chave = lerChave() || pedirChave();
+    let data = await chamar(chave);
+    if (data && data.erro) {
+      try { localStorage.removeItem(CHAVE_STORAGE); } catch (e) {}
+      chave = pedirChave('Chave inválida. Digite a chave de acesso do painel:');
+      if (!chave) throw new Error('Chave inválida');
+      data = await chamar(chave);
+      if (data && data.erro) throw new Error('Chave inválida');
+    }
+    return data;
+  }
+
   async function apiFetch(url, opts) {
     let chave = lerChave() || pedirChave();
     let res = await fetch(...comChave(url, opts, chave));
@@ -1269,9 +1296,7 @@
       document.getElementById('mainFunil').innerHTML = '<div class="empty">Carregando leads…</div>';
     }
     try {
-      const res = await apiFetch(API_BASE + '/funil-leads?slug=' + encodeURIComponent(SLUG));
-      if (!res.ok) throw new Error('Falha ao carregar');
-      const data = await res.json();
+      const data = await buscarLeadsSupabase();
       leads = data.leads || [];
       popularFiltroMeses();
       if (data.cliente && data.cliente.nome) {
