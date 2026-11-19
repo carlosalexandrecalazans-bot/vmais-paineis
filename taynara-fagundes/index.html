@@ -494,7 +494,7 @@
   const API_BASE = 'https://vmais.app.n8n.cloud/webhook';
   // Endereço do Worker da Cloudflare que envia mensagem e foto pelo WhatsApp sem passar pelo n8n
   // (ex.: 'https://NOME.SUBDOMINIO.workers.dev'). Vazio = usa o caminho antigo pelo n8n.
-  const PAINEL_WORKER_URL = '';
+  const PAINEL_WORKER_URL = 'https://meta-webhook-filter.carlosalexandrecalazans.workers.dev';
   const SLUG = new URLSearchParams(location.search).get('slug') || 'estetica-taynara-fagundes';
   // ---------- Chave de acesso do painel ----------
   // Cada clínica tem uma chave. Ela fica salva só neste navegador e vai junto em toda chamada ao n8n.
