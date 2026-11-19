@@ -339,6 +339,8 @@
   .bubble.cliente { align-self: flex-start; background: #fff; color: #2B1B12; border-bottom-left-radius: 2px; }
   .bubble.bot { align-self: flex-end; background: #D8C9A3; color: #2B1B12; border-bottom-right-radius: 2px; }
   .bubble.humano { align-self: flex-end; background: var(--gold); color: #fff; border-bottom-right-radius: 2px; }
+  .dia-sep { align-self: center; margin: 6px 0 2px; }
+  .dia-sep span { display: inline-block; background: rgba(43,27,18,0.1); color: var(--ink-soft); font-size: 10.5px; font-weight: 700; padding: 3px 12px; border-radius: 999px; }
   .bubble .tag-remetente { font-size: 9px; font-weight: 700; text-transform: uppercase; opacity: 0.6; display: block; margin-bottom: 2px; }
   .chat-input-row { flex: 0 0 auto; padding: 10px 12px; background: var(--paper); border-top: 1px solid var(--line); display: flex; gap: 8px; }
   .chat-input-row textarea { flex: 1; border: 1px solid var(--line); border-radius: 20px; padding: 10px 16px; font-size: 14px; resize: none; max-height: 80px; font-family: inherit; }
@@ -933,18 +935,43 @@
     if (!iso) return '';
     return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   }
+  function chaveDia(d) { return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); }
+  function rotuloDia(d) {
+    const hoje = new Date();
+    const ontem = new Date(); ontem.setDate(ontem.getDate() - 1);
+    if (chaveDia(d) === chaveDia(hoje)) return 'Hoje';
+    if (chaveDia(d) === chaveDia(ontem)) return 'Ontem';
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+  // Data + hora de cada mensagem: "Hoje 15:52", "Ontem 15:52" ou "27/10/2026 17:08"
+  function dataHoraMsg(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return rotuloDia(d) + ' ' + horaCurta(iso);
+  }
   function renderChatBody() {
     const body = document.getElementById('chatBody');
     const lead = leads.find(l => l.id === leadAberto);
     if (!lead) return;
     const hist = Array.isArray(lead.historico_conversa) ? lead.historico_conversa : [];
     if (hist.length === 0) { body.innerHTML = '<div class="empty" style="color:#8a7554;">Nenhuma mensagem ainda.</div>'; return; }
+    let diaAnterior = '';
     body.innerHTML = hist.map(m => {
+      let separador = '';
+      const dt = m.timestamp ? new Date(m.timestamp) : null;
+      if (dt && !isNaN(dt.getTime())) {
+        const k = chaveDia(dt);
+        if (k !== diaAnterior) {
+          diaAnterior = k;
+          separador = `<div class="dia-sep"><span>${rotuloDia(dt)}</span></div>`;
+        }
+      }
       const classe = m.role === 'user' ? 'cliente' : (m.role === 'humano' ? 'humano' : 'bot');
       const conteudo = (m.tipo === 'imagem' && m.url)
         ? `<img src="${escapeHtml(m.url)}" alt="Imagem" style="max-width:220px; border-radius:8px; display:block; margin-bottom:4px;" />${escapeHtml(m.content || '')}`
         : escapeHtml(m.content);
-      return `<div class="bubble ${classe}"><span class="tag-remetente">${nomeRemetente(m.role)}</span>${conteudo}<div class="meta">${horaCurta(m.timestamp)}</div></div>`;
+      return separador + `<div class="bubble ${classe}"><span class="tag-remetente">${nomeRemetente(m.role)}</span>${conteudo}<div class="meta">${dataHoraMsg(m.timestamp)}</div></div>`;
     }).join('');
     body.scrollTop = body.scrollHeight;
   }
