@@ -25,7 +25,15 @@
 //   um e sem alteração, na ordem em que chegaram (o n8n analisa/transcreve cada mídia).
 //   A marcação enviado_ao_n8n=true no Supabase indica o que já foi pro n8n.
 //
+// Painel (rotas /painel/responder-humano e /painel/enviar-midia)
+// - A equipe responde / manda foto pelo painel sem passar pelo n8n (não gasta execução).
+//   O Worker confere a chave do painel (painel_validar), envia pelo WhatsApp Cloud API
+//   e grava na conversa do lead (painel_registrar_envio). Se o token do cliente não
+//   estiver configurado, responde 501 e o painel usa o caminho antigo pelo n8n.
+//
 // Variáveis do Worker (Settings > Variables and Secrets):
+// - WA_TOKEN_SOFIST (secret): token de acesso do WhatsApp Cloud API da Sofist Laser (sem a palavra Bearer).
+// - WA_TOKEN_TAYNARA (secret): idem, da Estética Taynara Fagundes.
 // - SUPABASE_KEY (secret): service_role key do projeto Supabase.
 // - VERIFY_TOKEN (secret): token de verificação do webhook na Meta.
 // - AQUECIMENTO_LIBERADOS (texto): números separados por vírgula = só esses;
@@ -399,6 +407,102 @@ async function processarCtwa(env, payloadMsg, headers) {
   await agruparEEnviar(env, FILA_CTWA, payloadMsg, ultima.telefone, ultima.phone_number_id, recebidoEm, headers);
 }
 
+
+// ---------- Painel: envio pelo WhatsApp sem passar pelo n8n ----------
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Max-Age": "86400",
+};
+const respJson = (obj, status = 200) =>
+  new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...CORS } });
+const TOKEN_POR_CLIENTE = { 3: "WA_TOKEN_SOFIST", 2: "WA_TOKEN_TAYNARA" }; // cliente_id -> nome do segredo
+
+async function rpcSupabase(env, nome, args) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${nome}`, {
+    method: "POST",
+    headers: headersSupabase(env),
+    body: JSON.stringify(args),
+  });
+  if (!r.ok) throw new Error(`Supabase ${r.status}: ${await r.text()}`);
+  const t = await r.text();
+  return t ? JSON.parse(t) : null;
+}
+
+async function lerUm(env, tabela, filtros, select) {
+  const q = new URLSearchParams({ ...filtros, select, limit: "1" });
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${tabela}?${q}`, { headers: headersSupabase(env) });
+  if (!r.ok) throw new Error(`Supabase ${r.status}: ${await r.text()}`);
+  return (await r.json())[0] || null;
+}
+
+// tipo: "texto" (resposta da equipe) ou "midia" (foto com legenda)
+async function painelEnviar(env, c, tipo) {
+  const slug = String(c.slug || "");
+  const chave = String(c.chave || "");
+  const leadId = Number(c.lead_id);
+  if (!slug || !leadId) return respJson({ erro: "dados incompletos" }, 400);
+
+  const texto = String(c.mensagem || "").trim();
+  const imagem = String(c.image_url || "").trim();
+  const legenda = String(c.caption || "").trim();
+  if (tipo === "texto" && (!texto || texto.length > 4096)) return respJson({ erro: "mensagem inválida" }, 400);
+  if (tipo === "midia" && !/^https:\/\//i.test(imagem)) return respJson({ erro: "link da imagem inválido" }, 400);
+
+  const v = await rpcSupabase(env, "painel_validar", { p_slug: slug, p_chave: chave, p_lead_id: leadId });
+  if (!v || v.ok !== true) return respJson({ erro: "chave de acesso inválida" }, 401);
+
+  const lead = await lerUm(env, "leads", { id: `eq.${leadId}` }, "id,telefone,cliente_id");
+  if (!lead || !lead.telefone) return respJson({ erro: "lead não encontrado" }, 404);
+  const nomeSegredo = TOKEN_POR_CLIENTE[Number(lead.cliente_id)];
+  const token = nomeSegredo ? env[nomeSegredo] : "";
+  if (!token) return respJson({ erro: "token do WhatsApp não configurado no Worker" }, 501);
+  const cliente = await lerUm(env, "clientes", { id: `eq.${lead.cliente_id}` }, "id,whatsapp_phone_number_id");
+  if (!cliente || !cliente.whatsapp_phone_number_id) return respJson({ erro: "número do WhatsApp do cliente não encontrado" }, 501);
+
+  const corpo = tipo === "texto"
+    ? { messaging_product: "whatsapp", to: lead.telefone, type: "text", text: { body: texto } }
+    : { messaging_product: "whatsapp", to: lead.telefone, type: "image", image: { link: imagem, caption: legenda } };
+  const r = await fetch(`https://graph.facebook.com/v21.0/${cliente.whatsapp_phone_number_id}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(corpo),
+  });
+  if (!r.ok) {
+    const detalhe = (await r.text()).slice(0, 300);
+    console.log(`Painel: WhatsApp recusou (${r.status}) lead ${leadId}: ${detalhe}`);
+    return respJson({ erro: "o WhatsApp recusou o envio", status: r.status }, 502);
+  }
+
+  const agora = new Date().toISOString();
+  const msg = tipo === "texto"
+    ? { role: "humano", content: texto, timestamp: agora }
+    : { role: "assistant", content: legenda || "[imagem enviada manualmente]", tipo: "imagem", url: imagem, timestamp: agora };
+  try {
+    await rpcSupabase(env, "painel_registrar_envio", { p_lead_id: leadId, p_msg: msg, p_resposta_humana: tipo === "texto" });
+  } catch (e) {
+    // A mensagem já foi enviada: não devolve erro pro painel (a pessoa mandaria de novo).
+    console.log(`Painel: enviou mas não gravou na conversa (lead ${leadId}): ${e}`);
+  }
+  return respJson({ ok: true });
+}
+
+async function tratarPainel(request, env, url) {
+  if (request.method !== "POST") return respJson({ erro: "método não permitido" }, 405);
+  let corpo;
+  try { corpo = await request.json(); } catch (e) { return respJson({ erro: "corpo inválido" }, 400); }
+  try {
+    if (url.pathname === "/painel/responder-humano") return await painelEnviar(env, corpo, "texto");
+    if (url.pathname === "/painel/enviar-midia") return await painelEnviar(env, corpo, "midia");
+  } catch (e) {
+    console.log(`Painel: erro em ${url.pathname}: ${e}`);
+    return respJson({ erro: "falha interna" }, 500);
+  }
+  return respJson({ erro: "rota não encontrada" }, 404);
+}
+
 // ---------- Worker ----------
 
 const OK = () =>
@@ -406,6 +510,9 @@ const OK = () =>
 
 export default {
   async fetch(request, env, ctx) {
+    const urlReq = new URL(request.url);
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+    if (urlReq.pathname.startsWith("/painel/")) return tratarPainel(request, env, urlReq);
     if (request.method === "GET") {
       // Verificação do webhook pela Meta (hub.challenge) — respondida aqui,
       // sem depender do n8n estar ligado.
