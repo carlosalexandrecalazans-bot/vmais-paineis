@@ -494,6 +494,9 @@
 
 <script>
   const API_BASE = 'https://vmais.app.n8n.cloud/webhook';
+  // Endereço do Worker da Cloudflare que envia mensagem e foto pelo WhatsApp sem passar pelo n8n
+  // (ex.: 'https://NOME.SUBDOMINIO.workers.dev'). Vazio = usa o caminho antigo pelo n8n.
+  const PAINEL_WORKER_URL = 'https://meta-webhook-filter.carlosalexandrecalazans.workers.dev';
   const SLUG = new URLSearchParams(location.search).get('slug') || 'estetica-taynara-fagundes';
   // ---------- Chave de acesso do painel ----------
   // Cada clínica tem uma chave. Ela fica salva só neste navegador e vai junto em toda chamada ao n8n.
@@ -546,6 +549,40 @@
     return data;
   }
 
+  // Ações direto no Supabase (funções seguras que conferem a chave do painel). Não passam pelo n8n.
+  async function rpcPainel(nome, args) {
+    async function chamar(chave) {
+      const res = await fetch(SUPABASE_URL + '/rest/v1/rpc/' + nome, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: SUPABASE_PUBLISHABLE_KEY },
+        body: JSON.stringify(Object.assign({ p_slug: SLUG, p_chave: chave || '' }, args))
+      });
+      if (!res.ok) throw new Error('rpc ' + res.status);
+      return res.json();
+    }
+    let chave = lerChave() || pedirChave();
+    let data = await chamar(chave);
+    if (data && data.erro === 'chave de acesso inválida') {
+      try { localStorage.removeItem(CHAVE_STORAGE); } catch (e) {}
+      chave = pedirChave('Chave inválida. Digite a chave de acesso do painel:');
+      if (!chave) throw new Error('Chave inválida');
+      data = await chamar(chave);
+    }
+    if (!data || data.ok !== true) throw new Error((data && data.erro) || 'Falha');
+    return data;
+  }
+  // Mensagem/foto pelo Worker. Devolve true se enviou, null se não está disponível (aí usa o n8n).
+  async function viaWorker(rota, corpo) {
+    if (!PAINEL_WORKER_URL) return null;
+    let res;
+    try {
+      res = await apiFetch(PAINEL_WORKER_URL + rota, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+    } catch (e) { return null; }
+    if (res.ok) return true;
+    if (res.status === 501 || res.status === 500 || res.status === 503) return null;
+    throw new Error('Falha');
+  }
+
   async function apiFetch(url, opts) {
     let chave = lerChave() || pedirChave();
     let res = await fetch(...comChave(url, opts, chave));
@@ -564,8 +601,8 @@
     { id: 'aguardando_equipe', label: 'Aguardando equipe', cor: '#D9A441' },
     { id: 'em_conversa', label: 'Negociando', cor: '#B9862E' },
     { id: 'em_resgate', label: 'Em resgate', cor: '#D89A4A' },
-    { id: 'aguardando_agenda', label: 'Aguardando agenda', cor: '#8f5f8f' },
-    { id: 'agendado', label: 'Agendado', cor: '#D8B04A' },
+    { id: 'aguardando_agenda', label: 'Agendado', cor: '#8f5f8f' },
+    { id: 'agendado', label: 'Confirmado', cor: '#D8B04A' },
     { id: 'venda', label: 'Venda', cor: '#4C6B47' },
     { id: 'rmkt', label: 'Rmkt', cor: '#8fa3b0' },
     { id: 'perdido', label: 'Perdido', cor: '#A4442E' }
@@ -866,13 +903,19 @@
       if (!valorVenda || valorVenda <= 0) { showToast('Valor inválido — venda não registrada'); return; }
     }
     try {
-      const body = { lead_id: leadId, nova_etapa: novaEtapa, alterado_por: alteradoPor };
-      if (valorVenda) body.valor_venda = valorVenda;
-      const res = await apiFetch(API_BASE + '/funil-atualizar-etapa', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      if (!res.ok) throw new Error('Falha ao atualizar');
+      try {
+        await rpcPainel('painel_atualizar_etapa', { p_lead_id: leadId, p_nova_etapa: novaEtapa, p_alterado_por: alteradoPor, p_valor_venda: valorVenda || null });
+      } catch (e1) {
+        if (e1.message === 'Chave inválida') throw e1;
+        // reserva: caminho antigo pelo n8n
+        const body = { lead_id: leadId, nova_etapa: novaEtapa, alterado_por: alteradoPor };
+        if (valorVenda) body.valor_venda = valorVenda;
+        const res = await apiFetch(API_BASE + '/funil-atualizar-etapa', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error('Falha ao atualizar');
+      }
       const lead = leads.find(l => l.id === leadId);
       if (lead) lead.etapa_funil = novaEtapa;
       showToast('Movido para ' + (STAGES.find(s => s.id === novaEtapa) || {}).label);
@@ -952,11 +995,13 @@
     const btn = document.getElementById('chatSendBtn');
     btn.disabled = true;
     try {
-      const res = await apiFetch(API_BASE + '/funil-responder-humano', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: SLUG, lead_id: lead.id, telefone: lead.telefone, mensagem: texto })
-      });
-      if (!res.ok) throw new Error('Falha ao enviar');
+      if (!(await viaWorker('/painel/responder-humano', { slug: SLUG, lead_id: lead.id, mensagem: texto }))) {
+        const res = await apiFetch(API_BASE + '/funil-responder-humano', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug: SLUG, lead_id: lead.id, telefone: lead.telefone, mensagem: texto })
+        });
+        if (!res.ok) throw new Error('Falha ao enviar');
+      }
       if (!Array.isArray(lead.historico_conversa)) lead.historico_conversa = [];
       lead.historico_conversa.push({ role: 'humano', content: texto, timestamp: new Date().toISOString() });
       lead.atendimento_modo = 'humano';
@@ -983,11 +1028,13 @@
     const legenda = document.getElementById('fotoLegendaInput').value.trim();
     if (!url) { showToast('Cola o link da imagem primeiro'); return; }
     try {
-      const res = await apiFetch(API_BASE + '/funil-enviar-midia', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lead_id: leadAberto, image_url: url, caption: legenda })
-      });
-      if (!res.ok) throw new Error('Falha');
+      if (!(await viaWorker('/painel/enviar-midia', { lead_id: leadAberto, image_url: url, caption: legenda }))) {
+        const res = await apiFetch(API_BASE + '/funil-enviar-midia', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lead_id: leadAberto, image_url: url, caption: legenda })
+        });
+        if (!res.ok) throw new Error('Falha');
+      }
       fecharEnvioFoto();
       showToast('Foto enviada 📷');
       const lead = leads.find(l => l.id === leadAberto);
@@ -1004,11 +1051,16 @@
     const lead = leads.find(l => l.id === leadAberto);
     if (!lead) return;
     try {
-      const res = await apiFetch(API_BASE + '/funil-assumir-humano', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lead_id: lead.id })
-      });
-      if (!res.ok) throw new Error('Falha');
+      try {
+        await rpcPainel('painel_assumir', { p_lead_id: lead.id });
+      } catch (e1) {
+        if (e1.message === 'Chave inválida') throw e1;
+        const res = await apiFetch(API_BASE + '/funil-assumir-humano', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lead_id: lead.id })
+        });
+        if (!res.ok) throw new Error('Falha');
+      }
       lead.atendimento_modo = 'humano';
       showToast('Você assumiu — Sofia não vai responder esse lead 🙋');
       renderConteudoFunil();
@@ -1021,11 +1073,16 @@
     const lead = leads.find(l => l.id === leadAberto);
     if (!lead) return;
     try {
-      const res = await apiFetch(API_BASE + '/funil-devolver-ia', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lead_id: lead.id })
-      });
-      if (!res.ok) throw new Error('Falha');
+      try {
+        await rpcPainel('painel_devolver', { p_lead_id: lead.id });
+      } catch (e1) {
+        if (e1.message === 'Chave inválida') throw e1;
+        const res = await apiFetch(API_BASE + '/funil-devolver-ia', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lead_id: lead.id })
+        });
+        if (!res.ok) throw new Error('Falha');
+      }
       lead.atendimento_modo = 'bot';
       showToast('Devolvido pra Sofia 🤖');
       renderConteudoFunil();
@@ -1082,7 +1139,7 @@
         <div class="kpi danger"><div class="value">${perdidos}</div><div class="label">Perdidos</div></div>
         <div class="kpi"><div class="value">${taxaConversao}%</div><div class="label">Taxa de conversão</div></div>
         <div class="kpi"><div class="value">${comOrigem}/${total}</div><div class="label">Com origem rastreada</div></div>
-        <div class="kpi"><div class="value">${aguardandoAgenda}</div><div class="label">Aguardando agenda</div></div>
+        <div class="kpi"><div class="value">${aguardandoAgenda}</div><div class="label">Agendados</div></div>
       </div>
       <div class="section">
         <h2>Leads por etapa <span style="text-transform:none; font-weight:400; opacity:0.7;">(toque numa etapa pra ver os leads)</span></h2>
