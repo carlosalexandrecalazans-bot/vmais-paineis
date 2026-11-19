@@ -579,7 +579,7 @@
       res = await apiFetch(PAINEL_WORKER_URL + rota, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
     } catch (e) { return null; }
     if (res.ok) return true;
-    if (res.status === 501 || res.status === 500 || res.status === 503) return null;
+    if (res.status === 501 || res.status === 502 || res.status === 500 || res.status === 503) return null;
     throw new Error('Falha');
   }
 
