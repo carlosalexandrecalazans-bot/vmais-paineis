@@ -969,7 +969,7 @@
       }
       const classe = m.role === 'user' ? 'cliente' : (m.role === 'humano' ? 'humano' : 'bot');
       const conteudo = (m.tipo === 'imagem' && m.url)
-        ? `<img src="${escapeHtml(m.url)}" alt="Imagem" style="max-width:220px; border-radius:8px; display:block; margin-bottom:4px;" />${escapeHtml(m.content || '')}`
+        ? `<a href="${escapeHtml(m.url)}" target="_blank" rel="noopener" title="Abrir imagem em tamanho grande"><img src="${escapeHtml(m.url)}" alt="Imagem" style="max-width:220px; border-radius:8px; display:block; margin-bottom:4px; cursor:zoom-in;" /></a><div style="margin-bottom:4px; font-size:12px;"><a href="${escapeHtml(m.url)}" target="_blank" rel="noopener">Abrir</a> · <a href="${escapeHtml(m.url)}${m.url.includes('?') ? '&' : '?'}download=imagem.jpg">Baixar</a></div>${escapeHtml(m.content || '')}`
         : escapeHtml(m.content);
       return separador + `<div class="bubble ${classe}"><span class="tag-remetente">${nomeRemetente(m.role)}</span>${conteudo}<div class="meta">${dataHoraMsg(m.timestamp)}</div></div>`;
     }).join('');
